@@ -74,6 +74,12 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# Workaround: The jni plugin (transitive dep of google_fonts → path_provider)
+# fails to link on Fedora with snap's old binutils (2.34) because JDK 21's
+# libjawt.so uses .relr.dyn section unsupported by that ld.
+# We replace the jni plugin symlink with a stub that builds an empty library.
+# See linux/flutter/ephemeral/.plugin_symlinks/jni/linux/
+
 
 # === Installation ===
 # By default, "installing" just makes a relocatable bundle in the build

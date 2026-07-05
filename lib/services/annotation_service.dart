@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import '../models/highlight.dart';
+import 'app_paths.dart';
 
 /// Service for exporting and importing annotations (highlights, bookmarks)
 /// as JSON files. Enabled by Import & Backup screen.
@@ -13,7 +13,7 @@ class AnnotationService {
     required List<Highlight> highlights,
     required Map<String, List<String>> bookmarks,
   }) async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await AppPaths.documentsDir;
     final file = File('${dir.path}/$_fileName');
 
     final data = {
@@ -28,7 +28,7 @@ class AnnotationService {
         'color': h.color.name,
         'startOffset': h.startOffset,
         'endOffset': h.endOffset,
-        'createdAt': h.createdAt?.toIso8601String(),
+        'createdAt': h.createdAt.toIso8601String(),
       }).toList(),
       'bookmarks': bookmarks,
     };
@@ -39,7 +39,7 @@ class AnnotationService {
 
   /// Import annotations from a JSON file.
   Future<Map<String, dynamic>?> importAnnotations({String? path}) async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await AppPaths.documentsDir;
     final file = File(path ?? '${dir.path}/$_fileName');
 
     if (!await file.exists()) return null;
@@ -82,14 +82,14 @@ class AnnotationService {
 
   /// Check if an annotations file exists.
   Future<bool> hasAnnotations() async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await AppPaths.documentsDir;
     final file = File('${dir.path}/$_fileName');
     return file.exists();
   }
 
   /// Delete the annotations file.
   Future<void> clearAnnotations() async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await AppPaths.documentsDir;
     final file = File('${dir.path}/$_fileName');
     if (await file.exists()) {
       await file.delete();

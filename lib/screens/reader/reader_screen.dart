@@ -8,7 +8,6 @@ import '../../providers/library_provider.dart';
 import '../../models/book.dart';
 import '../../models/highlight.dart';
 import '../../widgets/bottom_sheets.dart';
-import '../../utils/helpers.dart';
 
 class ReaderScreen extends StatefulWidget {
   final Book book;
