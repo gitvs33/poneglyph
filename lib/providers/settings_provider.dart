@@ -25,6 +25,10 @@ class SettingsProvider extends ChangeNotifier {
   int _readingGoalMinutes = 20;
   bool _keepScreenOn = false;
   bool _autoNightMode = false;
+  String _nightModeStart = '22:00';
+  String _nightModeEnd = '06:00';
+  int _readingStreak = 0;
+  String _lastActiveDate = '';
   int _orientationLock = 0;
   double _defaultFontSize = 18.0;
   String _defaultFontFamily = 'System';
@@ -53,6 +57,10 @@ class SettingsProvider extends ChangeNotifier {
   int get readingGoalMinutes => _readingGoalMinutes;
   bool get keepScreenOn => _keepScreenOn;
   bool get autoNightMode => _autoNightMode;
+  String get nightModeStart => _nightModeStart;
+  String get nightModeEnd => _nightModeEnd;
+  int get readingStreak => _readingStreak;
+  String get lastActiveDate => _lastActiveDate;
   int get orientationLock => _orientationLock;
   double get defaultFontSize => _defaultFontSize;
   String get defaultFontFamily => _defaultFontFamily;
@@ -85,6 +93,10 @@ class SettingsProvider extends ChangeNotifier {
     _readingGoalMinutes = p.getInt('reading_goal') ?? 20;
     _keepScreenOn = p.getBool('keep_screen_on') ?? false;
     _autoNightMode = p.getBool('auto_night_mode') ?? false;
+    _nightModeStart = p.getString('night_mode_start') ?? '22:00';
+    _nightModeEnd = p.getString('night_mode_end') ?? '06:00';
+    _readingStreak = p.getInt('reading_streak') ?? 0;
+    _lastActiveDate = p.getString('last_active_date') ?? '';
     _orientationLock = p.getInt('orientation_lock') ?? 0;
     _defaultFontSize = p.getDouble('default_font_size') ?? 18.0;
     _defaultFontFamily = p.getString('default_font_family') ?? 'System';
@@ -141,6 +153,65 @@ class SettingsProvider extends ChangeNotifier {
 
   void setAutoNightMode(bool value) {
     _autoNightMode = value;
+    _markDirty();
+    notifyListeners();
+  }
+
+  void setNightModeStart(String value) {
+    _nightModeStart = value;
+    _markDirty();
+    notifyListeners();
+  }
+
+  void setNightModeEnd(String value) {
+    _nightModeEnd = value;
+    _markDirty();
+    notifyListeners();
+  }
+
+  /// Returns true if current time falls within night mode window.
+  bool isNightMode() {
+    if (!_autoNightMode) return false;
+    final now = DateTime.now();
+    final startParts = _nightModeStart.split(':');
+    final endParts = _nightModeEnd.split(':');
+    final startMin = int.parse(startParts[0]) * 60 + int.parse(startParts[1]);
+    final endMin = int.parse(endParts[0]) * 60 + int.parse(endParts[1]);
+    final currentMin = now.hour * 60 + now.minute;
+    if (startMin <= endMin) {
+      // Same-day window, e.g. 06:00-22:00
+      return currentMin >= startMin && currentMin < endMin;
+    } else {
+      // Overnight window, e.g. 22:00-06:00
+      return currentMin >= startMin || currentMin < endMin;
+    }
+  }
+
+  /// Updates reading streak based on last active date.
+  /// Call this when a reading session ends.
+  void updateReadingStreak() {
+    final today = DateTime.now();
+    final todayStr = '${today.year}-${today.month}-${today.day}';
+    if (_lastActiveDate == todayStr) {
+      // Already counted today
+      return;
+    }
+    if (_lastActiveDate.isEmpty) {
+      // First time
+      _readingStreak = 1;
+    } else {
+      final lastParts = _lastActiveDate.split('-');
+      final lastDate = DateTime(int.parse(lastParts[0]), int.parse(lastParts[1]), int.parse(lastParts[2]));
+      final diff = today.difference(lastDate).inDays;
+      if (diff == 1) {
+        _readingStreak++;
+      } else if (diff > 1) {
+        // Streak broken
+        _readingStreak = 1;
+      }
+      // diff == 0 handled above by todayStr check
+    }
+    _lastActiveDate = todayStr;
     _markDirty();
     notifyListeners();
   }
@@ -268,6 +339,10 @@ class SettingsProvider extends ChangeNotifier {
     await p.setInt('reading_goal', _readingGoalMinutes);
     await p.setBool('keep_screen_on', _keepScreenOn);
     await p.setBool('auto_night_mode', _autoNightMode);
+    await p.setString('night_mode_start', _nightModeStart);
+    await p.setString('night_mode_end', _nightModeEnd);
+    await p.setInt('reading_streak', _readingStreak);
+    await p.setString('last_active_date', _lastActiveDate);
     await p.setInt('orientation_lock', _orientationLock);
     await p.setDouble('default_font_size', _defaultFontSize);
     await p.setString('default_font_family', _defaultFontFamily);

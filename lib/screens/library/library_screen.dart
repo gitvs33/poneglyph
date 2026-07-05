@@ -262,7 +262,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: sortedAuthors.length,
-      separatorBuilder: (_, __) => Divider(
+      separatorBuilder: (_, _) => Divider(
           height: 1, color: Colors.white.withAlpha(15)),
       itemBuilder: (context, i) {
         final author = sortedAuthors[i];
@@ -308,7 +308,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: collections.length,
-      separatorBuilder: (_, __) =>
+      separatorBuilder: (_, _) =>
           Divider(height: 1, color: Colors.white.withAlpha(15)),
       itemBuilder: (context, i) {
         final c = collections[i];
@@ -552,15 +552,15 @@ class _BookGridItem extends StatelessWidget {
                     borderRadius:
                         BorderRadius.circular(DesignTokens.radiusMd),
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.menu_book_rounded,
-                        size: 32,
+                  child: Center(
+                    child: Text(
+                      _coverInitials(book.title),
+                      style: TextStyle(
+                        fontSize: 40,
+                        fontWeight: FontWeight.bold,
                         color: Colors.white.withAlpha(200),
                       ),
-                    ],
+                    ),
                   ),
                 ),
                 // Progress badge in bottom-right
@@ -633,6 +633,18 @@ class _BookGridItem extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _coverInitials(String title) {
+    final trimmed = title.trim();
+    if (trimmed.isEmpty) return '?';
+    final words = trimmed.split(RegExp(r'\s+'));
+    if (words.length >= 2) {
+      return '${words[0][0]}${words[1][0]}'.toUpperCase();
+    }
+    return trimmed.length >= 2
+        ? trimmed.substring(0, 2).toUpperCase()
+        : trimmed[0].toUpperCase();
   }
 
   Color _coverColor(String title) {

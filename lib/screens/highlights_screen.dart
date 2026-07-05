@@ -64,14 +64,19 @@ class _HighlightsScreenState extends State<HighlightsScreen> {
 
   String? _selectedBook;
   HighlightColor? _selectedColor;
+  bool _showNotes = false;
 
   List<Highlight> get _filteredHighlights {
     var result = List<Highlight>.from(_highlights);
-    if (_selectedBook != null) {
-      result = result.where((h) => h.bookId == _selectedBook).toList();
-    }
-    if (_selectedColor != null) {
-      result = result.where((h) => h.color == _selectedColor).toList();
+    if (_showNotes) {
+      result = result.where((h) => h.note != null).toList();
+    } else {
+      if (_selectedBook != null) {
+        result = result.where((h) => h.bookId == _selectedBook).toList();
+      }
+      if (_selectedColor != null) {
+        result = result.where((h) => h.color == _selectedColor).toList();
+      }
     }
     return result;
   }
@@ -104,22 +109,78 @@ class _HighlightsScreenState extends State<HighlightsScreen> {
               ),
             ),
 
-            // Color filter chips
-            SizedBox(
-              height: 36,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: DesignTokens.grid16),
+            // Segmented control: Highlights | Notes
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: DesignTokens.grid16, vertical: DesignTokens.grid8),
+              child: Row(
                 children: [
-                  _filterChip('All', null, () => setState(() => _selectedColor = null)),
-                  _filterChip('Yellow', HighlightColor.yellow, () => setState(() => _selectedColor = HighlightColor.yellow)),
-                  _filterChip('Green', HighlightColor.green, () => setState(() => _selectedColor = HighlightColor.green)),
-                  _filterChip('Blue', HighlightColor.blue, () => setState(() => _selectedColor = HighlightColor.blue)),
-                  _filterChip('Pink', HighlightColor.pink, () => setState(() => _selectedColor = HighlightColor.pink)),
-                  _filterChip('Underline', HighlightColor.underline, () => setState(() => _selectedColor = HighlightColor.underline)),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _showNotes = false),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: !_showNotes
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.primary.withAlpha(20),
+                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+                        ),
+                        child: Text(
+                          'Highlights',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: !_showNotes ? Colors.white : Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _showNotes = true),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _showNotes
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.primary.withAlpha(20),
+                          borderRadius: const BorderRadius.horizontal(right: Radius.circular(12)),
+                        ),
+                        child: Text(
+                          'Notes',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: _showNotes ? Colors.white : Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
+
+            // Color filter chips (only in highlights mode)
+            if (!_showNotes)
+              SizedBox(
+                height: 36,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: DesignTokens.grid16),
+                  children: [
+                    _filterChip('All', null, () => setState(() => _selectedColor = null)),
+                    _filterChip('Yellow', HighlightColor.yellow, () => setState(() => _selectedColor = HighlightColor.yellow)),
+                    _filterChip('Green', HighlightColor.green, () => setState(() => _selectedColor = HighlightColor.green)),
+                    _filterChip('Blue', HighlightColor.blue, () => setState(() => _selectedColor = HighlightColor.blue)),
+                    _filterChip('Pink', HighlightColor.pink, () => setState(() => _selectedColor = HighlightColor.pink)),
+                    _filterChip('Underline', HighlightColor.underline, () => setState(() => _selectedColor = HighlightColor.underline)),
+                  ],
+                ),
+              ),
 
             if (highlights.isEmpty)
               Expanded(
@@ -127,13 +188,14 @@ class _HighlightsScreenState extends State<HighlightsScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.highlight_off, size: 56,
+                      Icon(_showNotes ? Icons.note_outlined : Icons.highlight_off, size: 56,
                           color: theme.textTheme.bodySmall?.color?.withAlpha(80)),
                       const SizedBox(height: 16),
-                      Text('No highlights yet',
+                      Text(_showNotes ? 'No notes yet' : 'No highlights yet',
                           style: theme.textTheme.bodyMedium),
                       const SizedBox(height: 8),
-                      Text('Select text while reading to add highlights',
+                      Text(_showNotes ? 'Add notes to your highlights while reading'
+                              : 'Select text while reading to add highlights',
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.textTheme.bodySmall?.color?.withAlpha(120),
                           )),
@@ -148,6 +210,57 @@ class _HighlightsScreenState extends State<HighlightsScreen> {
                   itemCount: highlights.length,
                   itemBuilder: (context, index) {
                     final highlight = highlights[index];
+                    if (_showNotes) {
+                      final bookTitles = {
+                        '1': 'The Great Gatsby',
+                        '2': 'To Kill a Mockingbird',
+                        '3': '1984',
+                      };
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: DesignTokens.grid12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(DesignTokens.grid16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: theme.colorScheme.primary.withAlpha(20),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Icon(Icons.note, size: 18,
+                                        color: theme.colorScheme.primary),
+                                  ),
+                                  const SizedBox(width: DesignTokens.grid12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          highlight.note ?? '',
+                                          style: theme.textTheme.bodyMedium,
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          'Page ${highlight.startOffset ~/ 50 + 1} · ${bookTitles[highlight.bookId] ?? 'Unknown Book'}',
+                                          style: theme.textTheme.bodySmall?.copyWith(
+                                            color: theme.textTheme.bodySmall?.color?.withAlpha(120),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
                     return Card(
                       margin: const EdgeInsets.only(bottom: DesignTokens.grid12),
                       child: Padding(

@@ -6,6 +6,7 @@ import '../../providers/reader_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/library_provider.dart';
 import '../../models/book.dart';
+import '../../models/highlight.dart';
 import '../../widgets/bottom_sheets.dart';
 import '../../utils/helpers.dart';
 
@@ -23,6 +24,7 @@ class _ReaderScreenState extends State<ReaderScreen>
   late ReaderProvider _reader;
   late AnimationController _barController;
   late Animation<double> _barAnimation;
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -38,12 +40,14 @@ class _ReaderScreenState extends State<ReaderScreen>
       CurvedAnimation(parent: _barController, curve: Curves.easeInOut),
     );
     _barController.value = 1;
+    _searchController.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
     _reader.closeBook();
     _barController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -132,6 +136,56 @@ class _ReaderScreenState extends State<ReaderScreen>
     final theme = Theme.of(context);
     final pageContent = _getMockContent(widget.book.title, reader.currentPage);
 
+    final bodyTextStyle = TextStyle(
+      fontSize: settings.readingFontSize,
+      fontFamily: settings.readingFontFamily == 'System' ? null : settings.readingFontFamily,
+      fontWeight: FontWeight.values[(settings.readingFontWeight * 9).round()],
+      height: settings.readingLineHeight,
+      color: theme.textTheme.bodyLarge?.color,
+    );
+
+    final textAlign = settings.readingJustification ? TextAlign.justify : TextAlign.start;
+
+    // Build the body content — either SelectableText or two-column landscape layout
+    Widget bodyContent;
+    if (reader.mode == ReadingMode.twoColumnLandscape) {
+      // D4: Two-column landscape layout — split text into two columns
+      final paragraphs = pageContent.split('\n\n');
+      final mid = (paragraphs.length / 2).ceil();
+      final leftText = paragraphs.take(mid).join('\n\n');
+      final rightText = paragraphs.skip(mid).join('\n\n');
+
+      bodyContent = Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: SelectableText.rich(
+              TextSpan(text: leftText, style: bodyTextStyle),
+              textAlign: textAlign,
+              contextMenuBuilder: (context, state) =>
+                  _buildSelectionContextMenu(context, state),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: SelectableText.rich(
+              TextSpan(text: rightText, style: bodyTextStyle),
+              textAlign: textAlign,
+              contextMenuBuilder: (context, state) =>
+                  _buildSelectionContextMenu(context, state),
+            ),
+          ),
+        ],
+      );
+    } else {
+      bodyContent = SelectableText.rich(
+        TextSpan(text: pageContent, style: bodyTextStyle),
+        textAlign: textAlign,
+        contextMenuBuilder: (context, state) =>
+            _buildSelectionContextMenu(context, state),
+      );
+    }
+
     return Container(
       color: theme.scaffoldBackgroundColor,
       padding: EdgeInsets.symmetric(
@@ -156,17 +210,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                 ),
               ),
               SizedBox(height: settings.readingParagraphSpacing * 2),
-              Text(
-                pageContent,
-                style: TextStyle(
-                  fontSize: settings.readingFontSize,
-                  fontFamily: settings.readingFontFamily == 'System' ? null : settings.readingFontFamily,
-                  fontWeight: FontWeight.values[(settings.readingFontWeight * 9).round()],
-                  height: settings.readingLineHeight,
-                  color: theme.textTheme.bodyLarge?.color,
-                ),
-                textAlign: settings.readingJustification ? TextAlign.justify : TextAlign.start,
-              ),
+              bodyContent,
             ],
           ),
         ),
@@ -334,6 +378,33 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
   }
 
+  Widget _moreOptionTile(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    Widget? trailing,
+    VoidCallback? onTap,
+  }) {
+    final theme = Theme.of(context);
+    return ListTile(
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withAlpha(15),
+          borderRadius: BorderRadius.circular(DesignTokens.radiusSm),
+        ),
+        child: Icon(icon, size: 20, color: theme.colorScheme.primary),
+      ),
+      title: Text(title, style: const TextStyle(fontSize: 14)),
+      subtitle: subtitle != null
+          ? Text(subtitle, style: const TextStyle(fontSize: 11))
+          : null,
+      trailing: trailing,
+      onTap: onTap,
+    );
+  }
+
   Widget _buildTocPanel(BuildContext context, ReaderProvider reader, ThemeData theme) {
     final chapters = _getChapters(widget.book.title);
     return Container(
@@ -381,7 +452,24 @@ class _ReaderScreenState extends State<ReaderScreen>
                         color: isCurrent ? theme.colorScheme.primary : null,
                       ),
                     ),
-                    subtitle: Text('Page ${index * 20 + 1}'),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _getChapterSubtitle(index),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontStyle: FontStyle.italic,
+                            color: theme.textTheme.bodySmall?.color?.withAlpha(150),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Page ${index * 20 + 1}',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
                     onTap: () {
                       reader.goToPage(index * 20 + 1);
                       reader.setTocOpen(false);
@@ -423,6 +511,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
+                      controller: _searchController,
                       autofocus: true,
                       decoration: const InputDecoration(
                         hintText: 'Search in book…',
@@ -435,14 +524,16 @@ class _ReaderScreenState extends State<ReaderScreen>
               ),
             ),
             Expanded(
-              child: Center(
-                child: Text(
-                  'Start typing to search',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.textTheme.bodyMedium?.color?.withAlpha(100),
-                  ),
-                ),
-              ),
+              child: _searchController.text.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Start typing to search',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.textTheme.bodyMedium?.color?.withAlpha(100),
+                        ),
+                      ),
+                    )
+                  : _buildSearchResults(theme),
             ),
             Container(
               padding: const EdgeInsets.all(DesignTokens.grid16),
@@ -451,7 +542,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(onPressed: null, icon: const Icon(Icons.chevron_left)),
-                  const Text('0 results'),
+                  Text('${_getSearchResults(_searchController.text).length} results'),
                   IconButton(onPressed: null, icon: const Icon(Icons.chevron_right)),
                 ],
               ),
@@ -463,51 +554,110 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _showMoreMenu(BuildContext context, ReaderProvider reader) {
+    final settings = context.read<SettingsProvider>();
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final sheetTheme = Theme.of(context);
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.phone_android,
+                  title: 'Screen On While Reading',
+                  trailing: Switch(
+                    value: settings.keepScreenOn,
+                    onChanged: (v) {
+                      settings.setKeepScreenOn(v);
+                      setSheetState(() {});
+                    },
+                  ),
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.nights_stay,
+                  title: 'Night Mode by Time',
+                  subtitle: '${settings.nightModeStart} – ${settings.nightModeEnd}',
+                  trailing: Switch(
+                    value: settings.autoNightMode,
+                    onChanged: (v) {
+                      settings.setAutoNightMode(v);
+                      setSheetState(() {});
+                    },
+                  ),
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.lock,
+                  title: 'Lock Library',
+                  trailing: Switch(
+                    value: settings.appLockEnabled,
+                    onChanged: (v) {
+                      settings.setAppLockEnabled(v);
+                      setSheetState(() {});
+                    },
+                  ),
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.upload_file,
+                  title: 'Import/Export Annotations',
+                  trailing: Icon(Icons.chevron_right,
+                      color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
+                  onTap: () => Navigator.pop(context),
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.menu_book,
+                  title: 'Reading Mode',
+                  trailing: DropdownButton<ReadingMode>(
+                    value: reader.mode,
+                    underline: const SizedBox(),
+                    items: const [
+                      DropdownMenuItem(value: ReadingMode.pagination, child: Text('Pagination')),
+                      DropdownMenuItem(value: ReadingMode.continuousScroll, child: Text('Scroll')),
+                      DropdownMenuItem(value: ReadingMode.twoColumnLandscape, child: Text('Two Column')),
+                    ],
+                    onChanged: (mode) {
+                      if (mode != null) reader.setReadingMode(mode);
+                      setSheetState(() {});
+                    },
+                  ),
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.translate,
+                  title: 'Language',
+                  trailing: Text('English >',
+                      style: TextStyle(fontSize: 13,
+                          color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120))),
+                  onTap: () => Navigator.pop(context),
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.accessibility,
+                  title: 'Accessibility',
+                  trailing: Icon(Icons.chevron_right,
+                      color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
+                  onTap: () => Navigator.pop(context),
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.settings,
+                  title: 'Advanced Settings',
+                  trailing: Icon(Icons.chevron_right,
+                      color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
+                  onTap: () => Navigator.pop(context),
+                ),
+                const SizedBox(height: DesignTokens.grid16),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.highlight),
-              title: const Text('Highlights'),
-              onTap: () => Navigator.pop(ctx),
-            ),
-            ListTile(
-              leading: const Icon(Icons.menu_book),
-              title: const Text('Reading Mode'),
-              trailing: DropdownButton<ReadingMode>(
-                value: reader.mode,
-                underline: const SizedBox(),
-                items: const [
-                  DropdownMenuItem(value: ReadingMode.pagination, child: Text('Pagination')),
-                  DropdownMenuItem(value: ReadingMode.continuousScroll, child: Text('Scroll')),
-                  DropdownMenuItem(value: ReadingMode.twoColumnLandscape, child: Text('Two Column')),
-                ],
-                onChanged: (mode) {
-                  if (mode != null) reader.setReadingMode(mode);
-                  Navigator.pop(ctx);
-                },
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.timer),
-              title: const Text('Reading Time'),
-              subtitle: Text(Helpers.formatDuration(Duration(minutes: reader.currentPage * 2))),
-              onTap: () => Navigator.pop(ctx),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -588,6 +738,221 @@ class _ReaderScreenState extends State<ReaderScreen>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSelectionContextMenu(
+      BuildContext context, EditableTextState editableTextState) {
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableTextState.contextMenuAnchors,
+      buttonItems: [
+        ContextMenuButtonItem(
+          label: 'Highlight',
+          onPressed: () {
+            final selectedText = editableTextState.textEditingValue.selection
+                .textInside(editableTextState.textEditingValue.text);
+            if (selectedText.isNotEmpty) {
+              _addHighlight(selectedText,
+                  editableTextState.textEditingValue.selection.start,
+                  editableTextState.textEditingValue.selection.end);
+            }
+            editableTextState.hideToolbar();
+          },
+        ),
+        ContextMenuButtonItem(
+          label: 'Dictionary',
+          onPressed: () {
+            final selectedText = editableTextState.textEditingValue.selection
+                .textInside(editableTextState.textEditingValue.text);
+            if (selectedText.isNotEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Dictionary: $selectedText')),
+              );
+            }
+            editableTextState.hideToolbar();
+          },
+        ),
+        ContextMenuButtonItem(
+          label: 'Copy',
+          onPressed: () {
+            editableTextState.copySelection(SelectionChangedCause.toolbar);
+            editableTextState.hideToolbar();
+          },
+        ),
+        ContextMenuButtonItem(
+          label: 'Note',
+          onPressed: () {
+            final selectedText = editableTextState.textEditingValue.selection
+                .textInside(editableTextState.textEditingValue.text);
+            if (selectedText.isNotEmpty) {
+              _showAddNoteDialog(selectedText);
+            }
+            editableTextState.hideToolbar();
+          },
+        ),
+      ],
+    );
+  }
+
+  void _addHighlight(String text, int start, int end) {
+    // TODO: persist highlight to repository
+    // ignore: unused_local_variable
+    final highlight = Highlight(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      bookId: widget.book.id,
+      chapterId: 'ch_${_reader.currentPage}',
+      text: text,
+      startOffset: start,
+      endOffset: end,
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Text highlighted'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _showAddNoteDialog(String selectedText) {
+    final noteController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Note'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              selectedText,
+              style: TextStyle(
+                fontStyle: FontStyle.italic,
+                color: Theme.of(context).textTheme.bodyMedium?.color?.withAlpha(180),
+              ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteController,
+              decoration: InputDecoration(
+                hintText: 'Write your note…',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(noteController.text.isEmpty
+                      ? 'Note saved'
+                      : 'Note: ${noteController.text}'),
+                ),
+              );
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<TextSpan> _buildBoldedText(String text, String query) {
+    if (query.isEmpty) return [TextSpan(text: text)];
+    final baseStyle = TextStyle(
+      fontSize: 14,
+      color: Theme.of(context).textTheme.bodyMedium?.color,
+    );
+    final boldStyle = baseStyle.copyWith(
+      fontWeight: FontWeight.bold,
+      color: Theme.of(context).colorScheme.primary,
+    );
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final spans = <TextSpan>[];
+    int start = 0;
+    while (true) {
+      final index = lowerText.indexOf(lowerQuery, start);
+      if (index == -1) {
+        spans.add(TextSpan(text: text.substring(start), style: baseStyle));
+        break;
+      }
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index), style: baseStyle));
+      }
+      spans.add(TextSpan(
+          text: text.substring(index, index + query.length),
+          style: boldStyle));
+      start = index + query.length;
+    }
+    return spans;
+  }
+
+  String _getChapterSubtitle(int index) {
+    const subtitles = [
+      '',
+      'An Unexpected Party',
+      'Roast Mutton',
+      'A Short Rest',
+      'Over Hill and Under Hill',
+      'Riddles in the Dark',
+      'Out of the Frying-Pan into the Fire',
+      'Queer Lodgings',
+      'Barrels Out of Bond',
+      'A Warm Welcome',
+    ];
+    if (index < subtitles.length) return subtitles[index];
+    return '';
+  }
+
+  List<Map<String, String>> _getSearchResults(String query) {
+    if (query.isEmpty) return [];
+    return [
+      {'page': '3', 'excerpt': 'In a hole in the ground there lived a hobbit.'},
+      {'page': '16', 'excerpt': 'Bilbo was very rich for a hobbit.'},
+      {'page': '27', 'excerpt': 'The hobbit sat and thought.'},
+      {'page': '45', 'excerpt': 'The hobbits were singing merrily.'},
+      {'page': '102', 'excerpt': "A hobbit's life is peaceful."},
+    ];
+  }
+
+  Widget _buildSearchResults(ThemeData theme) {
+    final query = _searchController.text;
+    final results = _getSearchResults(query);
+    if (results.isEmpty) {
+      return Center(
+        child: Text(
+          'No results found',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.textTheme.bodyMedium?.color?.withAlpha(100),
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      itemCount: results.length,
+      itemBuilder: (context, index) {
+        final result = results[index];
+        return ListTile(
+          title: Text.rich(
+            TextSpan(children: _buildBoldedText(result['excerpt']!, query)),
+          ),
+          subtitle: Text('Page ${result['page']}'),
+          onTap: () {
+            _reader.goToPage(int.parse(result['page']!));
+            _reader.setSearching(false);
+          },
+        );
+      },
     );
   }
 

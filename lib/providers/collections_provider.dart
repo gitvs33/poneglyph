@@ -10,6 +10,7 @@ class CollectionsProvider extends ChangeNotifier {
   List<Collection> _collections = [];
   bool _isLoading = false;
   bool _isInitialized = false;
+  bool _seeded = false;
 
   CollectionsProvider({required BookRepository repo}) : _repo = repo;
 
@@ -24,6 +25,12 @@ class CollectionsProvider extends ChangeNotifier {
     notifyListeners();
 
     _collections = List<Collection>.from(await _repo.getCollections());
+
+    if (_collections.isEmpty && !_seeded) {
+      await _seedDefaultCollections();
+      _seeded = true;
+    }
+
     _isInitialized = true;
     _isLoading = false;
     notifyListeners();
@@ -86,6 +93,28 @@ class CollectionsProvider extends ChangeNotifier {
       );
       _repo.saveCollection(_collections[index]);
       notifyListeners();
+    }
+  }
+
+  // ── Seed defaults ────────────────────────────────────────
+
+  Future<void> _seedDefaultCollections() async {
+    const defaults = [
+      ('Favorites', 'star'),
+      ('Currently Reading', 'menu_book'),
+      ('To Read', 'playlist_add'),
+      ('Science', 'science'),
+      ('Motivation', 'emoji_events'),
+    ];
+
+    for (final (name, icon) in defaults) {
+      final collection = Collection(
+        id: 'seed_${name.toLowerCase().replaceAll(' ', '_')}',
+        name: name,
+        icon: icon,
+      );
+      await _repo.saveCollection(collection);
+      _collections.add(collection);
     }
   }
 

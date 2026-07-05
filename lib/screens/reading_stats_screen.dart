@@ -29,6 +29,14 @@ class ReadingStatsScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: DesignTokens.grid16),
 
+                  // Circular progress ring
+                  Center(
+                    child: _CircularProgressWidget(
+                      progress: (stats.totalTimeRead.inMinutes / 20).clamp(0, 1.0),
+                    ),
+                  ),
+                  const SizedBox(height: DesignTokens.grid24),
+
                   // Stats grid
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: DesignTokens.grid16),
@@ -76,7 +84,30 @@ class ReadingStatsScreen extends StatelessWidget {
                       DesignTokens.grid24,
                       DesignTokens.grid8,
                     ),
-                    child: Text('This Week', style: theme.textTheme.titleLarge),
+                    child: Row(
+                      children: [
+                        Text('Reading Activity', style: theme.textTheme.titleLarge),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () => _showPeriodPicker(context, stats),
+                          child: Row(
+                            children: [
+                              Text(
+                                _periodLabel(stats.selectedPeriod),
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                              Icon(
+                                Icons.arrow_drop_down,
+                                color: theme.colorScheme.primary,
+                                size: 20,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: DesignTokens.grid16),
@@ -198,6 +229,69 @@ class ReadingStatsScreen extends StatelessWidget {
       },
     );
   }
+
+  String _periodLabel(StatsPeriod period) {
+    switch (period) {
+      case StatsPeriod.thisWeek:
+        return 'This Week';
+      case StatsPeriod.thisMonth:
+        return 'This Month';
+      case StatsPeriod.allTime:
+        return 'All Time';
+    }
+  }
+
+  void _showPeriodPicker(BuildContext context, ReadingStatsProvider stats) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              title: const Text('This Week'),
+              trailing: stats.selectedPeriod == StatsPeriod.thisWeek
+                  ? Icon(Icons.check, color: Theme.of(ctx).colorScheme.primary)
+                  : null,
+              onTap: () {
+                stats.setSelectedPeriod(StatsPeriod.thisWeek);
+                Navigator.pop(ctx);
+              },
+            ),
+            ListTile(
+              title: const Text('This Month'),
+              trailing: stats.selectedPeriod == StatsPeriod.thisMonth
+                  ? Icon(Icons.check, color: Theme.of(ctx).colorScheme.primary)
+                  : null,
+              onTap: () {
+                stats.setSelectedPeriod(StatsPeriod.thisMonth);
+                Navigator.pop(ctx);
+              },
+            ),
+            ListTile(
+              title: const Text('All Time'),
+              trailing: stats.selectedPeriod == StatsPeriod.allTime
+                  ? Icon(Icons.check, color: Theme.of(ctx).colorScheme.primary)
+                  : null,
+              onTap: () {
+                stats.setSelectedPeriod(StatsPeriod.allTime);
+                Navigator.pop(ctx);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _StatCard extends StatelessWidget {
@@ -248,6 +342,152 @@ class _StatCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Circular Progress Ring ─────────────────────────────────
+
+class _CircularProgressRingPainter extends CustomPainter {
+  final double progress;
+  final Color primaryColor;
+  final Color textColor;
+  final Color mutedColor;
+
+  _CircularProgressRingPainter({
+    required this.progress,
+    required this.primaryColor,
+    required this.textColor,
+    required this.mutedColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.width - 24) / 2;
+    const strokeWidth = 12.0;
+
+    // Track circle
+    final trackPaint = Paint()
+      ..color = Colors.grey[850]!
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth;
+    canvas.drawCircle(center, radius, trackPaint);
+
+    // Progress arc
+    final arcPaint = Paint()
+      ..color = primaryColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    final sweepAngle = 2 * 3.141592653589793 * progress;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -3.141592653589793 / 2,
+      sweepAngle,
+      false,
+      arcPaint,
+    );
+
+    // Percentage text
+    final percentageText = '${(progress * 100).round()}%';
+    final percentageSpan = TextSpan(
+      text: percentageText,
+      style: TextStyle(
+        fontSize: 40,
+        fontWeight: FontWeight.bold,
+        color: textColor,
+      ),
+    );
+    final percentageTp = TextPainter(
+      text: percentageSpan,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    percentageTp.paint(
+      canvas,
+      Offset(center.dx - percentageTp.width / 2, center.dy - percentageTp.height - 4),
+    );
+
+    // "Completed" label
+    final completedSpan = TextSpan(
+      text: 'Completed',
+      style: TextStyle(fontSize: 14, color: mutedColor),
+    );
+    final completedTp = TextPainter(
+      text: completedSpan,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    completedTp.paint(
+      canvas,
+      Offset(center.dx - completedTp.width / 2, center.dy + 4),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CircularProgressRingPainter oldDelegate) =>
+      oldDelegate.progress != progress;
+}
+
+class _CircularProgressWidget extends StatefulWidget {
+  final double progress;
+
+  const _CircularProgressWidget({required this.progress});
+
+  @override
+  State<_CircularProgressWidget> createState() => _CircularProgressWidgetState();
+}
+
+class _CircularProgressWidgetState extends State<_CircularProgressWidget>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+    _animation = Tween<double>(begin: 0, end: widget.progress).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
+    );
+    _controller.forward();
+  }
+
+  @override
+  void didUpdateWidget(_CircularProgressWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.progress != widget.progress) {
+      _animation = Tween<double>(begin: _animation.value, end: widget.progress).animate(
+        CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
+      );
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return CustomPaint(
+          size: const Size(200, 200),
+          painter: _CircularProgressRingPainter(
+            progress: _animation.value,
+            primaryColor: theme.colorScheme.primary,
+            textColor: theme.textTheme.bodyLarge?.color ?? Colors.white,
+            mutedColor: theme.textTheme.bodySmall?.color?.withAlpha(150) ?? Colors.grey,
+          ),
+        );
+      },
     );
   }
 }
