@@ -13,7 +13,12 @@ dependencies:
   provider: ^6.1.2
   shared_preferences: ^2.3.4
   intl: ^0.20.2
-  file_picker: ^11.0.2
+  file_selector: ^1.1.0
+  epubx: ^4.0.0
+  archive: ^3.6.1
+  xml: ^6.6.1
+  pdf: ^3.8.4
+  pdf_text_extraction: ^2.1.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

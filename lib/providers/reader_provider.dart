@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import '../models/book.dart';
 import '../models/highlight.dart';
 import '../models/reading_session.dart';
+import '../services/ebook_content_service.dart';
 
 enum ReadingMode { pagination, continuousScroll, twoColumnLandscape }
 
-/// Ephemeral reading session state. Persistent reading settings
-/// (font, margins, brightness, etc.) live in [SettingsProvider].
+/// Ephemeral reading session state that now holds real ebook content
+/// parsed from the actual file (via [EbookContentService]).
 class ReaderProvider extends ChangeNotifier {
   // ── Session state ──────────────────────────────────────
 
@@ -25,6 +26,11 @@ class ReaderProvider extends ChangeNotifier {
   bool _isSearching = false;
   bool _isTocOpen = false;
 
+  // ── Ebook content ──────────────────────────────────────
+
+  List<EbookChapter> _chapters = [];
+  int _currentChapterIndex = 0;
+
   // ── Getters ────────────────────────────────────────────
 
   Book? get currentBook => _currentBook;
@@ -42,12 +48,50 @@ class ReaderProvider extends ChangeNotifier {
   double get readingProgress =>
       _totalPages > 0 ? _currentPage / _totalPages : 0.0;
 
+  // ── New content getters ────────────────────────────────
+
+  List<EbookChapter> get chapters => _chapters;
+  int get currentChapterIndex => _currentChapterIndex;
+
+  EbookChapter? get currentChapter =>
+      _chapters.isNotEmpty && _currentChapterIndex < _chapters.length
+          ? _chapters[_currentChapterIndex]
+          : null;
+
+  String get currentChapterTitle =>
+      currentChapter?.title ?? _currentBook?.title ?? '';
+
+  /// The text content for the *current page* of the current chapter.
+  /// Slices the chapter text by [_charsPerPage].
+  String get currentPageContent {
+    final ch = currentChapter;
+    if (ch == null || ch.content.isEmpty) return '';
+
+    final start = _currentPage * _charsPerPage;
+    final end = (start + _charsPerPage).clamp(0, ch.content.length);
+    return ch.content.substring(start, end).trim();
+  }
+
+  // ── Content loading ────────────────────────────────────
+
+  /// Load parsed ebook content into the reader.
+  void loadContent(EbookContent content) {
+    _chapters = content.chapters;
+    _currentChapterIndex = 0;
+    _currentPage = 0;
+    _totalPages = _chapters.isNotEmpty ? _chapters[0].estimatedPages : 0;
+    notifyListeners();
+  }
+
+  // Number of characters per "page" for slicing.
+  static const int _charsPerPage = 1500;
+
   // ── Session lifecycle ──────────────────────────────────
 
   void openBook(Book book) {
     _currentBook = book;
-    _totalPages = book.totalPages;
-    _currentPage = book.currentPage;
+    _totalPages = book.totalPages > 0 ? book.totalPages : 1;
+    _currentPage = book.currentPage.clamp(0, _totalPages);
     _currentSession = ReadingSession(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       bookId: book.id,
@@ -57,6 +101,8 @@ class ReaderProvider extends ChangeNotifier {
     _showBars = true;
     _isSearching = false;
     _isTocOpen = false;
+    _chapters = [];
+    _currentChapterIndex = 0;
     notifyListeners();
   }
 
@@ -74,22 +120,64 @@ class ReaderProvider extends ChangeNotifier {
   }
 
   void goToPage(int page) {
+    if (_totalPages <= 0) return;
     _currentPage = page.clamp(0, _totalPages);
     notifyListeners();
   }
 
   void nextPage() {
-    if (_currentPage < _totalPages) {
+    if (_chapters.isEmpty) {
+      // No loaded content – just increment page if possible
+      if (_currentPage < _totalPages) {
+        _currentPage++;
+        notifyListeners();
+      }
+      return;
+    }
+
+    if (_currentPage < _totalPages - 1) {
+      // Still in current chapter
       _currentPage++;
+      notifyListeners();
+    } else if (_currentChapterIndex < _chapters.length - 1) {
+      // Move to next chapter
+      _currentChapterIndex++;
+      _currentPage = 0;
+      _totalPages = _chapters[_currentChapterIndex].estimatedPages;
+      notifyListeners();
+    }
+    // else – end of book, do nothing
+  }
+
+  void previousPage() {
+    if (_chapters.isEmpty) {
+      if (_currentPage > 0) {
+        _currentPage--;
+        notifyListeners();
+      }
+      return;
+    }
+
+    if (_currentPage > 0) {
+      _currentPage--;
+      notifyListeners();
+    } else if (_currentChapterIndex > 0) {
+      // Move to previous chapter, last page
+      _currentChapterIndex--;
+      final prevCh = _chapters[_currentChapterIndex];
+      _totalPages = prevCh.estimatedPages;
+      _currentPage = _totalPages - 1;
       notifyListeners();
     }
   }
 
-  void previousPage() {
-    if (_currentPage > 0) {
-      _currentPage--;
-      notifyListeners();
-    }
+  /// Jump to a specific chapter by index.
+  void navigateToChapter(int index) {
+    if (index < 0 || index >= _chapters.length) return;
+    _currentChapterIndex = index;
+    _currentPage = 0;
+    _totalPages = _chapters[index].estimatedPages;
+    notifyListeners();
   }
 
   void setScrollPosition(double position) {
@@ -112,7 +200,7 @@ class ReaderProvider extends ChangeNotifier {
   // ── Bookmarks ──────────────────────────────────────────
 
   void toggleBookmark() {
-    final pageKey = '${_currentBook?.id}_$_currentPage';
+    final pageKey = '${_currentBook?.id}_$_currentChapterIndex:$_currentPage';
     if (_bookmarkedPages.contains(pageKey)) {
       _bookmarkedPages.remove(pageKey);
     } else {
@@ -122,7 +210,7 @@ class ReaderProvider extends ChangeNotifier {
   }
 
   bool isCurrentPageBookmarked() {
-    final pageKey = '${_currentBook?.id}_$_currentPage';
+    final pageKey = '${_currentBook?.id}_$_currentChapterIndex:$_currentPage';
     return _bookmarkedPages.contains(pageKey);
   }
 

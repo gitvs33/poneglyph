@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_selector/file_selector.dart';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/collections_provider.dart';
@@ -501,7 +502,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.textTheme.bodySmall?.color?.withAlpha(130),
                   )),
-              onTap: () => Navigator.pop(ctx),
+              onTap: () {
+                Navigator.pop(ctx);
+                _importFromDevice();
+              },
             ),
             ListTile(
               leading: const Icon(Icons.link),
@@ -510,7 +514,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.textTheme.bodySmall?.color?.withAlpha(130),
                   )),
-              onTap: () => Navigator.pop(ctx),
+              onTap: () {
+                Navigator.pop(ctx);
+                _importFromUrl();
+              },
             ),
             ListTile(
               leading: const Icon(Icons.drive_file_move_outlined),
@@ -527,6 +534,151 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _importFromDevice() async {
+    try {
+      final xFiles = await openFiles(
+        acceptedTypeGroups: [
+          XTypeGroup(
+            label: 'eBooks',
+            extensions: ['epub', 'pdf', 'mobi'],
+          ),
+        ],
+      );
+
+      if (xFiles.isEmpty) return;
+
+      if (!mounted) return;
+      final library = context.read<LibraryProvider>();
+      int added = 0;
+
+      for (final xf in xFiles) {
+        final path = xf.path;
+        if (path.isEmpty) continue;
+
+        final name = xf.name;
+        final ext = name.contains('.')
+            ? name.split('.').last.toLowerCase()
+            : 'epub';
+
+        BookFormat format = BookFormat.epub;
+        if (ext == 'pdf') format = BookFormat.pdf;
+        if (ext == 'mobi') format = BookFormat.mobi;
+
+        final title = name.replaceAll(RegExp(r'\.[^.]+$'), '');
+
+        // Default to 300 pages (typical book length) since we can't parse
+        // the actual file yet. Real EPUB/PDF parsing later.
+        const int defaultPages = 300;
+
+        await library.addBook(Book(
+          id: 'import_${DateTime.now().millisecondsSinceEpoch}_$added',
+          title: title,
+          author: 'Unknown',
+          format: format,
+          source: BookSource.device,
+          filePath: path,
+          totalPages: defaultPages,
+        ));
+        added++;
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              added == 1 ? 'Imported 1 book' : 'Imported $added books',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import error: $e'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _importFromUrl() async {
+    final controller = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import from URL'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/book.epub',
+            labelText: 'Book URL',
+          ),
+          keyboardType: TextInputType.url,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Import'),
+          ),
+        ],
+      ),
+    );
+
+    if (url == null || url.isEmpty) return;
+
+    final uri = Uri.tryParse(url);
+    final pathSegments = uri?.pathSegments ?? [];
+    final fileName = pathSegments.isNotEmpty ? pathSegments.last : 'book';
+    final title = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final ext = fileName.contains('.')
+        ? fileName.split('.').last.toLowerCase()
+        : 'epub';
+
+    BookFormat format;
+    switch (ext) {
+      case 'pdf':
+        format = BookFormat.pdf;
+        break;
+      case 'mobi':
+        format = BookFormat.mobi;
+        break;
+      default:
+        format = BookFormat.epub;
+    }
+
+    final id = 'book_url_${DateTime.now().millisecondsSinceEpoch}';
+    final book = Book(
+      id: id,
+      title: title,
+      author: 'Unknown',
+      format: format,
+      source: BookSource.url,
+      filePath: url,
+      description: 'Imported from URL: $url',
+      totalPages: 0,
+    );
+
+    await context.read<LibraryProvider>().addBook(book);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added "$title" to library'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 }
 

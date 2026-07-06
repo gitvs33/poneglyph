@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../models/book.dart';
@@ -16,45 +16,64 @@ class _ImportPageState extends State<ImportPage> {
   bool _isImporting = false;
 
   Future<void> _importFromDevice() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['epub', 'pdf', 'mobi'],
-      allowMultiple: true,
-    );
+    try {
+      final xFiles = await openFiles(
+        acceptedTypeGroups: [
+          XTypeGroup(
+            label: 'eBooks',
+            extensions: ['epub', 'pdf', 'mobi'],
+          ),
+        ],
+      );
 
-    if (result == null || result.files.isEmpty) return;
+      if (xFiles.isEmpty) return;
 
-    setState(() => _isImporting = true);
-    final library = context.read<LibraryProvider>();
-    int added = 0;
+      if (!mounted) return;
+      setState(() => _isImporting = true);
 
-    for (final file in result.files) {
-      final path = file.path;
-      if (path == null) continue;
+      final library = context.read<LibraryProvider>();
+      int added = 0;
 
-      String ext = file.extension?.toLowerCase() ?? 'epub';
-      BookFormat format = BookFormat.epub;
-      if (ext == 'pdf') format = BookFormat.pdf;
-      if (ext == 'mobi') format = BookFormat.mobi;
+      for (final xf in xFiles) {
+        final path = xf.path;
+        if (path.isEmpty) continue;
 
-      final title = file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
+        final name = xf.name;
+        final ext = name.contains('.')
+            ? name.split('.').last.toLowerCase()
+            : 'epub';
 
-      await library.addBook(Book(
-        id: 'onboard_${DateTime.now().millisecondsSinceEpoch}_$added',
-        title: title,
-        author: 'Unknown',
-        format: format,
-        source: BookSource.device,
-        filePath: path,
-        totalPages: 0,
-      ));
-      added++;
-    }
+        BookFormat format = BookFormat.epub;
+        if (ext == 'pdf') format = BookFormat.pdf;
+        if (ext == 'mobi') format = BookFormat.mobi;
 
-    setState(() => _isImporting = false);
-    if (mounted) {
+        final title = name.replaceAll(RegExp(r'\.[^.]+$'), '');
+
+        await library.addBook(Book(
+          id: 'onboard_${DateTime.now().millisecondsSinceEpoch}_$added',
+          title: title,
+          author: 'Unknown',
+          format: format,
+          source: BookSource.device,
+          filePath: path,
+          totalPages: 0,
+        ));
+        added++;
+      }
+
+      if (!mounted) return;
+      setState(() => _isImporting = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$added book(s) imported')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isImporting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Import error: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
       );
     }
   }

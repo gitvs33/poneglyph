@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../models/book.dart';
@@ -19,54 +19,84 @@ class ImportBackupScreen extends StatefulWidget {
 
 class _ImportBackupScreenState extends State<ImportBackupScreen> {
   bool _isImporting = false;
+  String? _lastError;
 
   Future<void> _importFromDevice() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['epub', 'pdf', 'mobi'],
-      allowMultiple: true,
-    );
-
-    if (result == null || result.files.isEmpty) return;
-
-    setState(() => _isImporting = true);
-    final library = context.read<LibraryProvider>();
-    int added = 0;
-
-    for (final file in result.files) {
-      final path = file.path;
-      if (path == null) continue;
-
-      String ext = file.extension?.toLowerCase() ?? 'epub';
-      BookFormat format = BookFormat.epub;
-      if (ext == 'pdf') format = BookFormat.pdf;
-      if (ext == 'mobi') format = BookFormat.mobi;
-
-      final title = file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
-
-      await library.addBook(Book(
-        id: 'import_${DateTime.now().millisecondsSinceEpoch}_$added',
-        title: title,
-        author: 'Unknown',
-        format: format,
-        source: BookSource.device,
-        filePath: path,
-        totalPages: 0,
-      ));
-      added++;
-    }
-
-    setState(() => _isImporting = false);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            added == 1 ? 'Imported 1 book' : 'Imported $added books',
+    try {
+      final xFiles = await openFiles(
+        acceptedTypeGroups: [
+          XTypeGroup(
+            label: 'eBooks',
+            extensions: ['epub', 'pdf', 'mobi'],
           ),
-          behavior: SnackBarBehavior.floating,
-        ),
+        ],
       );
+
+      if (xFiles.isEmpty) return;
+
+      setState(() => _isImporting = true);
+      _lastError = null;
+
+      final library = context.read<LibraryProvider>();
+      int added = 0;
+
+      for (final xf in xFiles) {
+        final path = xf.path;
+        if (path.isEmpty) continue;
+
+        final name = xf.name;
+        final ext = name.contains('.')
+            ? name.split('.').last.toLowerCase()
+            : 'epub';
+
+        BookFormat format = BookFormat.epub;
+        if (ext == 'pdf') format = BookFormat.pdf;
+        if (ext == 'mobi') format = BookFormat.mobi;
+
+        final title = name.replaceAll(RegExp(r'\.[^.]+$'), '');
+
+        // Default to 300 pages (typical book length) since we can't parse
+        // the actual file yet. Real EPUB/PDF parsing later.
+        const int defaultPages = 300;
+
+        await library.addBook(Book(
+          id: 'import_${DateTime.now().millisecondsSinceEpoch}_$added',
+          title: title,
+          author: 'Unknown',
+          format: format,
+          source: BookSource.device,
+          filePath: path,
+          totalPages: defaultPages,
+        ));
+        added++;
+      }
+
+      setState(() => _isImporting = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              added == 1 ? 'Imported 1 book' : 'Imported $added books',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isImporting = false;
+        _lastError = e.toString();
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import error: $e'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
     }
   }
 
@@ -278,6 +308,22 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
                           _comingSoon,
                         ),
                       ),
+                      if (_lastError != null)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                            DesignTokens.grid24,
+                            DesignTokens.grid8,
+                            DesignTokens.grid24,
+                            0,
+                          ),
+                          child: Text(
+                            'Last error: $_lastError',
+                            style: TextStyle(
+                              color: Colors.red.shade700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
                       const SizedBox(height: DesignTokens.grid16),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(

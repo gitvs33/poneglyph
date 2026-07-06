@@ -7,6 +7,7 @@ import '../../providers/settings_provider.dart';
 import '../../providers/library_provider.dart';
 import '../../models/book.dart';
 import '../../models/highlight.dart';
+import '../../services/ebook_content_service.dart';
 import '../../widgets/bottom_sheets.dart';
 import '../bookmarks_screen.dart';
 import '../import_backup_screen.dart';
@@ -26,6 +27,9 @@ class _ReaderScreenState extends State<ReaderScreen>
   late AnimationController _barController;
   late Animation<double> _barAnimation;
   final TextEditingController _searchController = TextEditingController();
+  final EbookContentService _contentService = EbookContentService();
+  bool _loadingError = false;
+  String _loadingErrorMessage = '';
 
   @override
   void initState() {
@@ -42,6 +46,32 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
     _barController.value = 1;
     _searchController.addListener(() => setState(() {}));
+
+    // Load real ebook content asynchronously
+    _loadBookContent();
+  }
+
+  Future<void> _loadBookContent() async {
+    try {
+      final format = widget.book.format;
+      final path = widget.book.filePath;
+      if (path == null || path.isEmpty) {
+        _loadingError = true;
+        _loadingErrorMessage = 'No file path for this book.';
+        return;
+      }
+
+      final content = await _contentService.readBook(path, format);
+      if (content == null || !mounted) return;
+
+      _reader.loadContent(content);
+      setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      _loadingError = true;
+      _loadingErrorMessage = e.toString();
+      setState(() {});
+    }
   }
 
   @override
@@ -55,7 +85,6 @@ class _ReaderScreenState extends State<ReaderScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // Capture library provider from outer scope (guaranteed MultiProvider access).
     final library = context.read<LibraryProvider>();
 
     return ChangeNotifierProvider.value(
@@ -76,56 +105,55 @@ class _ReaderScreenState extends State<ReaderScreen>
                         _barController.reverse();
                       }
                     },
-                    child: _buildReadingContent(
-                        context, reader, settings),
+                    child: _buildReadingContent(context, reader, settings),
                   ),
                 ),
 
-                  // Top Bar
-                  if (reader.showBars)
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: FadeTransition(
-                        opacity: _barAnimation,
-                        child: _buildTopBar(context, reader, theme, library),
-                      ),
+                // Top Bar
+                if (reader.showBars)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: FadeTransition(
+                      opacity: _barAnimation,
+                      child: _buildTopBar(context, reader, theme, library),
                     ),
+                  ),
 
-                  // Bottom Bar
-                  if (reader.showBars)
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: FadeTransition(
-                        opacity: _barAnimation,
-                        child: _buildBottomBar(context, reader, settings, theme),
-                      ),
+                // Bottom Bar
+                if (reader.showBars)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: FadeTransition(
+                      opacity: _barAnimation,
+                      child: _buildBottomBar(context, reader, settings, theme),
                     ),
+                  ),
 
-                  // TOC Panel
-                  if (reader.isTocOpen)
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: _buildTocPanel(context, reader, theme),
-                    ),
+                // TOC Panel
+                if (reader.isTocOpen)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _buildTocPanel(context, reader, theme),
+                  ),
 
-                  // Search Panel
-                  if (reader.isSearching)
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: _buildSearchPanel(context, reader, theme),
-                    ),
-                ],
-              ),
+                // Search Panel
+                if (reader.isSearching)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _buildSearchPanel(context, reader, theme),
+                  ),
+              ],
+            ),
           );
         },
       ),
@@ -135,22 +163,71 @@ class _ReaderScreenState extends State<ReaderScreen>
   Widget _buildReadingContent(
       BuildContext context, ReaderProvider reader, SettingsProvider settings) {
     final theme = Theme.of(context);
-    final pageContent = _getMockContent(widget.book.title, reader.currentPage);
+
+    // Show loading/error states
+    if (reader.chapters.isEmpty && !_loadingError) {
+      return Container(
+        color: theme.scaffoldBackgroundColor,
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (reader.chapters.isEmpty && _loadingError) {
+      return Container(
+        color: theme.scaffoldBackgroundColor,
+        padding: const EdgeInsets.all(32),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+              const SizedBox(height: 16),
+              Text(
+                'Could not load book content',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _loadingErrorMessage,
+                style: theme.textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () {
+                  _loadingError = false;
+                  setState(() {});
+                  _loadBookContent();
+                },
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Real content
+    final pageContent = reader.currentPageContent;
+    final chapterTitle = reader.currentChapterTitle;
 
     final bodyTextStyle = TextStyle(
       fontSize: settings.readingFontSize,
-      fontFamily: settings.readingFontFamily == 'System' ? null : settings.readingFontFamily,
-      fontWeight: FontWeight.values[(settings.readingFontWeight * 9).round()],
+      fontFamily: settings.readingFontFamily == 'System'
+          ? null
+          : settings.readingFontFamily,
+      fontWeight:
+          FontWeight.values[(settings.readingFontWeight * 9).round()],
       height: settings.readingLineHeight,
       color: theme.textTheme.bodyLarge?.color,
     );
 
-    final textAlign = settings.readingJustification ? TextAlign.justify : TextAlign.start;
+    final textAlign =
+        settings.readingJustification ? TextAlign.justify : TextAlign.start;
 
-    // Build the body content — either SelectableText or two-column landscape layout
+    // Build the body content — either SelectableText or two-column landscape
     Widget bodyContent;
     if (reader.mode == ReadingMode.twoColumnLandscape) {
-      // D4: Two-column landscape layout — split text into two columns
+      // D4: Two-column landscape — split text into two columns
       final paragraphs = pageContent.split('\n\n');
       final mid = (paragraphs.length / 2).ceil();
       final leftText = paragraphs.take(mid).join('\n\n');
@@ -187,6 +264,9 @@ class _ReaderScreenState extends State<ReaderScreen>
       );
     }
 
+    final showChapterTitle = chapterTitle.isNotEmpty &&
+        chapterTitle != widget.book.title;
+
     return Container(
       color: theme.scaffoldBackgroundColor,
       padding: EdgeInsets.symmetric(
@@ -201,17 +281,40 @@ class _ReaderScreenState extends State<ReaderScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                widget.book.title,
-                style: TextStyle(
-                  fontSize: settings.readingFontSize * 1.3,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: settings.readingFontFamily == 'System' ? null : settings.readingFontFamily,
-                  color: theme.textTheme.bodyLarge?.color,
+              // Chapter title (only shown if different from book title)
+              if (showChapterTitle)
+                Padding(
+                  padding: EdgeInsets.only(
+                    bottom: settings.readingParagraphSpacing * 2,
+                  ),
+                  child: Text(
+                    chapterTitle,
+                    style: TextStyle(
+                      fontSize: settings.readingFontSize * 1.3,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: settings.readingFontFamily == 'System'
+                          ? null
+                          : settings.readingFontFamily,
+                      color: theme.textTheme.bodyLarge?.color,
+                    ),
+                  ),
                 ),
-              ),
-              SizedBox(height: settings.readingParagraphSpacing * 2),
               bodyContent,
+              // Page indicator at bottom
+              if (reader.totalPages > 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 32),
+                  child: Center(
+                    child: Text(
+                      '— Page ${reader.currentPage + 1} of ${reader.totalPages} —',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.textTheme.bodySmall?.color
+                            ?.withAlpha(100),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -255,13 +358,17 @@ class _ReaderScreenState extends State<ReaderScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  widget.book.title,
+                  reader.currentChapterTitle.isNotEmpty
+                      ? reader.currentChapterTitle
+                      : widget.book.title,
                   style: theme.textTheme.titleSmall,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  'Page ${reader.currentPage} of ${reader.totalPages}',
+                  reader.chapters.isNotEmpty
+                      ? 'Chapter ${reader.currentChapterIndex + 1} of ${reader.chapters.length} · Page ${reader.currentPage + 1} of ${reader.totalPages}'
+                      : 'Page ${reader.currentPage} of ${reader.totalPages}',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.textTheme.labelSmall?.color?.withAlpha(150),
                   ),
@@ -275,7 +382,9 @@ class _ReaderScreenState extends State<ReaderScreen>
           ),
           IconButton(
             icon: Icon(
-              reader.isCurrentPageBookmarked() ? Icons.bookmark : Icons.bookmark_border,
+              reader.isCurrentPageBookmarked()
+                  ? Icons.bookmark
+                  : Icons.bookmark_border,
             ),
             onPressed: reader.toggleBookmark,
           ),
@@ -292,8 +401,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
   }
 
-  Widget _buildBottomBar(
-      BuildContext context, ReaderProvider reader, SettingsProvider settings, ThemeData theme) {
+  Widget _buildBottomBar(BuildContext context, ReaderProvider reader,
+      SettingsProvider settings, ThemeData theme) {
     return Container(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).padding.bottom,
@@ -324,7 +433,7 @@ class _ReaderScreenState extends State<ReaderScreen>
               value: reader.currentPage.toDouble(),
               min: 0,
               max: reader.totalPages.toDouble(),
-              divisions: reader.totalPages,
+              divisions: reader.totalPages > 0 ? reader.totalPages : null,
               onChanged: (value) => reader.goToPage(value.round()),
             ),
           ),
@@ -333,28 +442,18 @@ class _ReaderScreenState extends State<ReaderScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _bottomButton(Icons.chevron_left, 'Prev', () => reader.previousPage()),
+              _bottomButton(Icons.chevron_left, 'Prev',
+                  () => reader.previousPage()),
+              _bottomButton(Icons.format_size, 'Font',
+                  () => _showFontSettings(context, settings)),
+              _bottomButton(Icons.palette, 'Theme',
+                  () => _showThemeSettings(context)),
+              _bottomButton(Icons.volume_up, 'TTS',
+                  () => reader.setTTSActive(!reader.isTTSActive)),
+              _bottomButton(Icons.brightness_6, 'Brightness',
+                  () => _showBrightnessSlider(context, settings)),
               _bottomButton(
-                Icons.format_size,
-                'Font',
-                () => _showFontSettings(context, settings),
-              ),
-              _bottomButton(
-                Icons.palette,
-                'Theme',
-                () => _showThemeSettings(context),
-              ),
-              _bottomButton(
-                Icons.volume_up,
-                'TTS',
-                () => reader.setTTSActive(!reader.isTTSActive),
-              ),
-              _bottomButton(
-                Icons.brightness_6,
-                'Brightness',
-                () => _showBrightnessSlider(context, settings),
-              ),
-              _bottomButton(Icons.chevron_right, 'Next', () => reader.nextPage()),
+                  Icons.chevron_right, 'Next', () => reader.nextPage()),
             ],
           ),
         ],
@@ -378,6 +477,8 @@ class _ReaderScreenState extends State<ReaderScreen>
       ),
     );
   }
+
+  // ── More Options Sheet ─────────────────────────────────
 
   Widget _moreOptionTile(
     BuildContext context, {
@@ -406,8 +507,12 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
   }
 
-  Widget _buildTocPanel(BuildContext context, ReaderProvider reader, ThemeData theme) {
-    final chapters = _getChapters(widget.book.title);
+  // ── Table of Contents ──────────────────────────────────
+
+  Widget _buildTocPanel(
+      BuildContext context, ReaderProvider reader, ThemeData theme) {
+    final chapters = reader.chapters;
+
     return Container(
       color: theme.scaffoldBackgroundColor,
       child: SafeArea(
@@ -432,52 +537,61 @@ class _ReaderScreenState extends State<ReaderScreen>
                     onPressed: () => reader.setTocOpen(false),
                   ),
                   const SizedBox(width: 8),
-                  Text('Table of Contents', style: theme.textTheme.titleLarge),
+                  Text('Table of Contents',
+                      style: theme.textTheme.titleLarge),
                 ],
               ),
             ),
             Expanded(
-              child: ListView.separated(
-                itemCount: chapters.length,
-                separatorBuilder: (_, __) => const Divider(),
-                itemBuilder: (context, index) {
-                  final chapter = chapters[index];
-                  final isCurrent = index == reader.currentPage ~/ 20;
-                  return ListTile(
-                    selected: isCurrent,
-                    selectedTileColor: theme.colorScheme.primary.withAlpha(15),
-                    title: Text(
-                      chapter,
-                      style: TextStyle(
-                        fontWeight: isCurrent ? FontWeight.w600 : FontWeight.normal,
-                        color: isCurrent ? theme.colorScheme.primary : null,
+              child: chapters.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No table of contents available',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.textTheme.bodyMedium?.color
+                              ?.withAlpha(100),
+                        ),
                       ),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _getChapterSubtitle(index),
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontStyle: FontStyle.italic,
-                            color: theme.textTheme.bodySmall?.color?.withAlpha(150),
+                    )
+                  : ListView.separated(
+                      itemCount: chapters.length,
+                      separatorBuilder: (_, __) => const Divider(),
+                      itemBuilder: (context, index) {
+                        final chapter = chapters[index];
+                        final isCurrent =
+                            index == reader.currentChapterIndex;
+                        return ListTile(
+                          selected: isCurrent,
+                          selectedTileColor:
+                              theme.colorScheme.primary.withAlpha(15),
+                          title: Text(
+                            chapter.title.isNotEmpty
+                                ? chapter.title
+                                : 'Chapter ${index + 1}',
+                            style: TextStyle(
+                              fontWeight: isCurrent
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                              color: isCurrent
+                                  ? theme.colorScheme.primary
+                                  : null,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Page ${index * 20 + 1}',
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ],
+                          subtitle: Text(
+                            '${chapter.estimatedPages} page${chapter.estimatedPages == 1 ? '' : 's'}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.textTheme.bodySmall?.color
+                                  ?.withAlpha(150),
+                            ),
+                          ),
+                          onTap: () {
+                            reader.navigateToChapter(index);
+                            reader.setTocOpen(false);
+                          },
+                        );
+                      },
                     ),
-                    onTap: () {
-                      reader.goToPage(index * 20 + 1);
-                      reader.setTocOpen(false);
-                    },
-                  );
-                },
-              ),
             ),
           ],
         ),
@@ -485,7 +599,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
   }
 
-  Widget _buildSearchPanel(BuildContext context, ReaderProvider reader, ThemeData theme) {
+  // ── Search ─────────────────────────────────────────────
+
+  Widget _buildSearchPanel(
+      BuildContext context, ReaderProvider reader, ThemeData theme) {
     return Container(
       color: theme.scaffoldBackgroundColor,
       child: SafeArea(
@@ -530,29 +647,96 @@ class _ReaderScreenState extends State<ReaderScreen>
                       child: Text(
                         'Start typing to search',
                         style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.textTheme.bodyMedium?.color?.withAlpha(100),
+                          color: theme.textTheme.bodyMedium?.color
+                              ?.withAlpha(100),
                         ),
                       ),
                     )
-                  : _buildSearchResults(theme),
-            ),
-            Container(
-              padding: const EdgeInsets.all(DesignTokens.grid16),
-              decoration: BoxDecoration(color: theme.cardColor),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  IconButton(onPressed: null, icon: const Icon(Icons.chevron_left)),
-                  Text('${_getSearchResults(_searchController.text).length} results'),
-                  IconButton(onPressed: null, icon: const Icon(Icons.chevron_right)),
-                ],
-              ),
+                  : _buildSearchResults(theme, reader),
             ),
           ],
         ),
       ),
     );
   }
+
+  List<Map<String, dynamic>> _getSearchResults(
+      String query, ReaderProvider reader) {
+    if (query.isEmpty) return [];
+    final results = <Map<String, dynamic>>[];
+    final q = query.toLowerCase();
+
+    for (int ci = 0; ci < reader.chapters.length; ci++) {
+      final chapter = reader.chapters[ci];
+      if (chapter.content.isEmpty) continue;
+
+      // Find all occurrences in this chapter
+      final text = chapter.content;
+      int start = 0;
+      while (true) {
+        final idx = text.toLowerCase().indexOf(q, start);
+        if (idx == -1) break;
+
+        // Extract surrounding context
+        final ctxStart = (idx - 40).clamp(0, text.length);
+        final ctxEnd = (idx + q.length + 40).clamp(0, text.length);
+        final excerpt = text.substring(ctxStart, ctxEnd);
+
+        // Calculate which "page" this would be on
+        final page = (idx / 1500).floor();
+
+        results.add({
+          'chapter': ci,
+          'chapterTitle': chapter.title,
+          'page': page,
+          'offset': idx,
+          'excerpt': excerpt,
+        });
+        start = idx + 1;
+      }
+    }
+
+    return results;
+  }
+
+  Widget _buildSearchResults(ThemeData theme, ReaderProvider reader) {
+    final query = _searchController.text;
+    final results = _getSearchResults(query, reader);
+    if (results.isEmpty) {
+      return Center(
+        child: Text(
+          'No results found',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.textTheme.bodyMedium?.color?.withAlpha(100),
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      itemCount: results.length,
+      itemBuilder: (context, index) {
+        final result = results[index];
+        return ListTile(
+          title: Text.rich(
+            TextSpan(
+              children: _buildBoldedText(result['excerpt'] as String, query),
+            ),
+          ),
+          subtitle: Text(
+            '${result['chapterTitle']} · Page ${result['page']}',
+          ),
+          onTap: () {
+            // Navigate to the chapter and page
+            reader.navigateToChapter(result['chapter'] as int);
+            reader.goToPage(result['page'] as int);
+            reader.setSearching(false);
+          },
+        );
+      },
+    );
+  }
+
+  // ── Context Menu, Dialogs, etc. ────────────────────────
 
   void _showMoreMenu(BuildContext context, ReaderProvider reader) {
     final settings = context.read<SettingsProvider>();
@@ -588,7 +772,8 @@ class _ReaderScreenState extends State<ReaderScreen>
                 _moreOptionTile(context,
                   icon: Icons.nights_stay,
                   title: 'Night Mode by Time',
-                  subtitle: '${settings.nightModeStart} – ${settings.nightModeEnd}',
+                  subtitle:
+                      '${settings.nightModeStart} – ${settings.nightModeEnd}',
                   trailing: Switch(
                     value: settings.autoNightMode,
                     onChanged: (v) {
@@ -612,12 +797,14 @@ class _ReaderScreenState extends State<ReaderScreen>
                   icon: Icons.upload_file,
                   title: 'Import/Export Annotations',
                   trailing: Icon(Icons.chevron_right,
-                      color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
+                      color: sheetTheme.textTheme.bodySmall?.color
+                          ?.withAlpha(120)),
                   onTap: () {
                     Navigator.pop(context);
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const ImportBackupScreen()),
+                      MaterialPageRoute(
+                          builder: (_) => const ImportBackupScreen()),
                     );
                   },
                 ),
@@ -625,12 +812,14 @@ class _ReaderScreenState extends State<ReaderScreen>
                   icon: Icons.bookmark,
                   title: 'View All Bookmarks',
                   trailing: Icon(Icons.chevron_right,
-                      color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
+                      color: sheetTheme.textTheme.bodySmall?.color
+                          ?.withAlpha(120)),
                   onTap: () {
                     Navigator.pop(context);
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const BookmarksScreen()),
+                      MaterialPageRoute(
+                          builder: (_) => const BookmarksScreen()),
                     );
                   },
                 ),
@@ -641,9 +830,15 @@ class _ReaderScreenState extends State<ReaderScreen>
                     value: reader.mode,
                     underline: const SizedBox(),
                     items: const [
-                      DropdownMenuItem(value: ReadingMode.pagination, child: Text('Pagination')),
-                      DropdownMenuItem(value: ReadingMode.continuousScroll, child: Text('Scroll')),
-                      DropdownMenuItem(value: ReadingMode.twoColumnLandscape, child: Text('Two Column')),
+                      DropdownMenuItem(
+                          value: ReadingMode.pagination,
+                          child: Text('Pagination')),
+                      DropdownMenuItem(
+                          value: ReadingMode.continuousScroll,
+                          child: Text('Scroll')),
+                      DropdownMenuItem(
+                          value: ReadingMode.twoColumnLandscape,
+                          child: Text('Two Column')),
                     ],
                     onChanged: (mode) {
                       if (mode != null) reader.setReadingMode(mode);
@@ -655,22 +850,26 @@ class _ReaderScreenState extends State<ReaderScreen>
                   icon: Icons.translate,
                   title: 'Language',
                   trailing: Text('English >',
-                      style: TextStyle(fontSize: 13,
-                          color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120))),
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: sheetTheme.textTheme.bodySmall?.color
+                              ?.withAlpha(120))),
                   onTap: () => Navigator.pop(context),
                 ),
                 _moreOptionTile(context,
                   icon: Icons.accessibility,
                   title: 'Accessibility',
                   trailing: Icon(Icons.chevron_right,
-                      color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
+                      color: sheetTheme.textTheme.bodySmall?.color
+                          ?.withAlpha(120)),
                   onTap: () => Navigator.pop(context),
                 ),
                 _moreOptionTile(context,
                   icon: Icons.settings,
                   title: 'Advanced Settings',
                   trailing: Icon(Icons.chevron_right,
-                      color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
+                      color: sheetTheme.textTheme.bodySmall?.color
+                          ?.withAlpha(120)),
                   onTap: () => Navigator.pop(context),
                 ),
                 const SizedBox(height: DesignTokens.grid16),
@@ -718,7 +917,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
   }
 
-  void _showBrightnessSlider(BuildContext context, SettingsProvider settings) {
+  void _showBrightnessSlider(
+      BuildContext context, SettingsProvider settings) {
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
@@ -727,7 +927,8 @@ class _ReaderScreenState extends State<ReaderScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Brightness', style: Theme.of(context).textTheme.titleLarge),
+              Text('Brightness',
+                  style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: DesignTokens.grid20),
               Row(
                 children: [
@@ -815,7 +1016,6 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   void _addHighlight(String text, int start, int end) {
-    // TODO: persist highlight to repository
     // ignore: unused_local_variable
     final highlight = Highlight(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -847,7 +1047,11 @@ class _ReaderScreenState extends State<ReaderScreen>
               selectedText,
               style: TextStyle(
                 fontStyle: FontStyle.italic,
-                color: Theme.of(context).textTheme.bodyMedium?.color?.withAlpha(180),
+                color: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.color
+                    ?.withAlpha(180),
               ),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
@@ -907,7 +1111,8 @@ class _ReaderScreenState extends State<ReaderScreen>
         break;
       }
       if (index > start) {
-        spans.add(TextSpan(text: text.substring(start, index), style: baseStyle));
+        spans.add(
+            TextSpan(text: text.substring(start, index), style: baseStyle));
       }
       spans.add(TextSpan(
           text: text.substring(index, index + query.length),
@@ -915,109 +1120,5 @@ class _ReaderScreenState extends State<ReaderScreen>
       start = index + query.length;
     }
     return spans;
-  }
-
-  String _getChapterSubtitle(int index) {
-    const subtitles = [
-      '',
-      'An Unexpected Party',
-      'Roast Mutton',
-      'A Short Rest',
-      'Over Hill and Under Hill',
-      'Riddles in the Dark',
-      'Out of the Frying-Pan into the Fire',
-      'Queer Lodgings',
-      'Barrels Out of Bond',
-      'A Warm Welcome',
-    ];
-    if (index < subtitles.length) return subtitles[index];
-    return '';
-  }
-
-  List<Map<String, String>> _getSearchResults(String query) {
-    if (query.isEmpty) return [];
-    return [
-      {'page': '3', 'excerpt': 'In a hole in the ground there lived a hobbit.'},
-      {'page': '16', 'excerpt': 'Bilbo was very rich for a hobbit.'},
-      {'page': '27', 'excerpt': 'The hobbit sat and thought.'},
-      {'page': '45', 'excerpt': 'The hobbits were singing merrily.'},
-      {'page': '102', 'excerpt': "A hobbit's life is peaceful."},
-    ];
-  }
-
-  Widget _buildSearchResults(ThemeData theme) {
-    final query = _searchController.text;
-    final results = _getSearchResults(query);
-    if (results.isEmpty) {
-      return Center(
-        child: Text(
-          'No results found',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.textTheme.bodyMedium?.color?.withAlpha(100),
-          ),
-        ),
-      );
-    }
-    return ListView.builder(
-      itemCount: results.length,
-      itemBuilder: (context, index) {
-        final result = results[index];
-        return ListTile(
-          title: Text.rich(
-            TextSpan(children: _buildBoldedText(result['excerpt']!, query)),
-          ),
-          subtitle: Text('Page ${result['page']}'),
-          onTap: () {
-            _reader.goToPage(int.parse(result['page']!));
-            _reader.setSearching(false);
-          },
-        );
-      },
-    );
-  }
-
-  String _getMockContent(String bookTitle, int page) {
-    final lorem = '''
-Far far away, behind the word mountains, far from the countries Vokalia and Consonantia, there live the blind texts. Separated they live in Bookmarksgrove right at the coast of the Semantics, a large language ocean.
-
-A small river named Duden flows by their place and supplies it with the necessary regelialia. It is a paradisematic country, in which roasted parts of sentences fly into your mouth.
-
-Even the all-powerful Pointing has no control about the blind texts it is an almost unorthographic life One day however a small line of blind text by the name of Lorem Ipsum decided to leave for the far World of Grammar.
-
-The Big Oxmox advised her not to do so, because there were thousands of bad Commas, wild Question Marks and devious Semikoli, but the Little Blind Text didn't listen. She packed her seven versalia, put her initial into the belt and made herself on the way.
-
-When she reached the first hills of the Italic Mountains, she had a last view back on the skyline of her hometown Bookmarksgrove, the headline of Alphabet Village and the subline of her own road, the Line Lane. Pityful a rethoric question ran over her cheek, then she continued her way.
-
-On her way she met a copy. The copy warned the Little Blind Text, that where it came from it would have been rewritten a thousand times and everything that was left from its origin would be the word "and" and the Little Blind Text should turn around and return to its own, safe country.
-
-But nothing the copy said could convince her and so it didn't take long until a few insidious Copy Writers ambushed her, made her drunk with Longe and Parole and dragged her into their agency, where they abused her for their projects.
-
-Again and again, she looked at the page numbers. Page $page of the book "$bookTitle" - each page a new adventure in reading. The words flowed like a gentle stream, carrying the reader through valleys of imagination and mountains of thought.
-
-The protagonist paused, considering the weight of their journey so far. Every story has its turning point, and this was surely one of them. The air was thick with anticipation as they turned the page, eager to discover what lay ahead in the unfolding narrative.
-
-Duis autem vel eum iriure dolor in hendrerit in vulputate velit esse molestie consequat, vel illum dolore eu feugiat nulla facilisis at vero eros et accumsan et iusto odio dignissim qui blandit praesent luptatum zzril delenit augue duis dolore te feugait nulla facilisi.
-''';
-
-    final paragraphs = lorem.split('\n\n');
-    final paragraphIndex = page % paragraphs.length;
-    final startIndex = paragraphIndex;
-    final endIndex = (startIndex + 3).clamp(0, paragraphs.length);
-    return paragraphs.sublist(startIndex, endIndex).join('\n\n');
-  }
-
-  List<String> _getChapters(String bookTitle) {
-    return [
-      'Prologue',
-      'Chapter 1: The Beginning',
-      'Chapter 2: Discovery',
-      'Chapter 3: The Journey',
-      'Chapter 4: Reflections',
-      'Chapter 5: The Turning Point',
-      'Chapter 6: Revelations',
-      'Chapter 7: The Climax',
-      'Chapter 8: Resolution',
-      'Epilogue',
-    ];
   }
 }
