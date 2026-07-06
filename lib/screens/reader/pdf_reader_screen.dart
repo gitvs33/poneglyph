@@ -16,14 +16,21 @@ import '../../theme/theme_provider.dart';
 /// The top/bottom bar overlays provide page navigation and chrome control.
 /// Tapping the PDF content toggles the bars. Pinch-to-zoom works natively.
 ///
-/// Annotations (highlight, underline, strikethrough) are **eagerly persisted**
-/// to the PDF file itself via [PdfViewerController.saveDocument] as soon as
-/// they are added/removed/edited (debounced 500 ms). This means annotations
-/// survive app restarts and are visible in other PDF readers when the file
-/// is shared.
-///
-/// Text selection via long-press is enabled. The built-in context menu
+/// **Text selection** via long-press is enabled. The built-in context menu
 /// provides Copy, Highlight, Underline, Strikethrough, and Squiggly.
+///
+/// **Annotation persistence**: Annotations are eagerly persisted to the PDF
+/// file itself via [PdfViewerController.saveDocument] as soon as they are
+/// added/removed/edited (debounced 500 ms).  Annotations survive app restarts
+/// and are visible in other PDF readers when the file is shared.
+///
+/// **Undo / Redo**: Uses [UndoHistoryController] wired to
+/// [SfPdfViewer.undoController] so Syncfusion's annotation undo/redo stack
+/// is accessible via the Options sheet.  Ctrl+Z / Ctrl+Y work on desktop.
+///
+/// **Erase**: Tap an existing annotation to select it → a "Delete highlight"
+/// button appears at the top.  The Options sheet also has "Erase all
+/// annotations on this page".
 class PdfReaderScreen extends StatefulWidget {
   final Book book;
 
@@ -52,6 +59,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   bool _annotationsChanged = false;
   Timer? _saveDebounceTimer;
 
+  // ── Undo / Redo ────────────────────────────────────────
+  /// Passed to [SfPdfViewer.undoController] so Syncfusion wires annotation
+  /// undo/redo to the Flutter [UndoHistoryController] natively.
+  final UndoHistoryController _undoController = UndoHistoryController();
+
+  // ── Annotation selection ───────────────────────────────
+  /// The currently tapped / selected annotation, or null.
+  Annotation? _selectedAnnotation;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +78,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     );
     _currentPage = widget.book.currentPage;
     _pdfController = PdfViewerController();
+
+    // Listen for undo/redo triggers from the UndoHistoryController
+    // (e.g. from a hardware keyboard shortcut).
+    _undoController.addListener(() {
+      // value.canUndo / value.canRedo changed — rebuild UI buttons
+      if (mounted) setState(() {});
+    });
 
     _barController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -77,6 +100,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   void dispose() {
     _currentSession = _currentSession?.end();
     _saveDebounceTimer?.cancel();
+    _undoController.removeListener(() => setState(() {}));
+    _undoController.dispose();
     // Fire-and-forget final save attempt. The eager saves above should have
     // already persisted the bytes while the controller was alive, so this is
     // just a belt-and-suspenders call.
@@ -172,6 +197,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   void _showMoreOptions(BuildContext context) {
     final theme = Theme.of(context);
+    final canUndo = _undoController.value.canUndo;
+    final canRedo = _undoController.value.canRedo;
 
     showModalBottomSheet(
       context: context,
@@ -195,6 +222,39 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             const SizedBox(height: 16),
             Text('Options', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
+            // ── Undo ────────────────
+            _optionTile(
+              ctx, theme,
+              Icons.undo, 'Undo annotation',
+              canUndo
+                  ? () {
+                      Navigator.pop(ctx);
+                      _undoController.undo();
+                    }
+                  : null,
+            ),
+            // ── Redo ────────────────
+            _optionTile(
+              ctx, theme,
+              Icons.redo, 'Redo annotation',
+              canRedo
+                  ? () {
+                      Navigator.pop(ctx);
+                      _undoController.redo();
+                    }
+                  : null,
+            ),
+            // ── Erase all ───────────
+            if (_hasAnnotations)
+              _optionTile(
+                ctx, theme,
+                Icons.auto_delete, 'Erase all annotations on this page',
+                () {
+                  Navigator.pop(ctx);
+                  _eraseAnnotationsOnCurrentPage();
+                },
+              ),
+            const Divider(height: 1),
             _optionTile(ctx, theme, Icons.search, 'Search', () {
               Navigator.pop(ctx);
               _showSearchDialog();
@@ -222,12 +282,35 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     );
   }
 
+  /// Whether the controller has any annotations (used to show erase option).
+  bool get _hasAnnotations {
+    try {
+      return _pdfController != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Remove all annotations on the current page.
+  void _eraseAnnotationsOnCurrentPage() {
+    _pdfController?.removeAllAnnotations(pageNumber: _currentPage + 1);
+  }
+
   Widget _optionTile(BuildContext ctx, ThemeData theme, IconData icon,
-      String label, VoidCallback onTap) {
+      String label, VoidCallback? onTap) {
+    final enabled = onTap != null;
     return ListTile(
-      leading: Icon(icon, color: theme.iconTheme.color),
-      title: Text(label, style: theme.textTheme.bodyLarge),
-      trailing: Icon(Icons.chevron_right, color: theme.disabledColor),
+      leading: Icon(icon,
+          color: enabled
+              ? theme.iconTheme.color
+              : theme.disabledColor),
+      title: Text(label,
+          style: theme.textTheme.bodyLarge?.copyWith(
+            color: enabled ? null : theme.disabledColor,
+          )),
+      trailing: Icon(Icons.chevron_right,
+          color: enabled ? theme.disabledColor : Colors.transparent),
+      enabled: enabled,
       onTap: onTap,
     );
   }
@@ -241,6 +324,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = _isDarkMode(context);
+    final fg = isDark ? Colors.white : const Color(0xFF7C6FFF);
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F0F17) : Colors.white,
@@ -259,6 +343,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               // ── Book-like page turning ─────────────────
               pageLayoutMode: PdfPageLayoutMode.continuous,
               scrollDirection: PdfScrollDirection.vertical,
+              // ── Undo / Redo ───────────────────────────
+              undoController: _undoController,
               // ── UI chrome ──────────────────────────────
               canShowScrollHead: false,
               canShowScrollStatus: false,
@@ -291,6 +377,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               onAnnotationAdded: (_) => _scheduleAnnotationSave(),
               onAnnotationRemoved: (_) => _scheduleAnnotationSave(),
               onAnnotationEdited: (_) => _scheduleAnnotationSave(),
+              // ── Annotation selection ───────────────────
+              onAnnotationSelected: (annotation) {
+                setState(() => _selectedAnnotation = annotation);
+              },
+              onAnnotationDeselected: (_) {
+                setState(() => _selectedAnnotation = null);
+              },
             )
           else
             const Center(child: Text('No file path')),
@@ -332,6 +425,57 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                           color: theme.textTheme.bodySmall?.color,
                         )),
                   ],
+                ),
+              ),
+            ),
+
+          // ── Annotation action bar ─────────────────────
+          // Appears when the user taps an existing highlight to select it.
+          if (_selectedAnnotation != null && _isReady)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Material(
+                color: isDark
+                    ? const Color(0xFF0F0F17).withAlpha(230)
+                    : Colors.white.withAlpha(240),
+                elevation: 2,
+                child: SafeArea(
+                  bottom: false,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Deselect',
+                        color: fg,
+                        onPressed: () {
+                          _pdfController?.deselectAnnotation(
+                              _selectedAnnotation!);
+                          setState(() => _selectedAnnotation = null);
+                        },
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: () {
+                          final annotation = _selectedAnnotation;
+                          if (annotation != null) {
+                            _pdfController?.removeAnnotation(annotation);
+                            setState(
+                                () => _selectedAnnotation = null);
+                          }
+                        },
+                        icon: Icon(Icons.delete_outline,
+                            color: theme.colorScheme.error),
+                        label: Text(
+                          'Delete highlight',
+                          style: TextStyle(
+                              color: theme.colorScheme.error),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                  ),
                 ),
               ),
             ),
