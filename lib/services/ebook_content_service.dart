@@ -396,7 +396,10 @@ class EbookContentService {
 
   /// Synchronous PDF text extraction — designed to run on a background isolate.
   static String _extractPdfTextSync(Uint8List bytes) {
-    final content = utf8.decode(bytes, allowMalformed: true);
+    // latin1 is a lossless 1:1 byte<->char mapping — string offsets are exact byte offsets.
+    // (utf8.decode with allowMalformed collapses invalid multi-byte sequences into a single
+    // U+FFFD, which desyncs string position from byte position on any binary/compressed data.)
+    final content = latin1.decode(bytes);
 
     // Fast path: try BT/ET on raw bytes (works for simple/uncompressed PDFs)
     String text = _extractTextFromContentStatic(content);
@@ -464,6 +467,10 @@ class EbookContentService {
   }
 
   /// Find FlateDecode streams, decompress with zlib, extract text (static).
+  ///
+  /// Uses latin1.decode (lossless byte↔char) so that string indices from regex
+  /// matches are directly usable as byte indices into the original Uint8List — no
+  /// expensive utf8.encode round-trip needed.
   static String _extractTextFromFlateStreamsStatic(Uint8List bytes, String content) {
     final buffer = StringBuffer();
 
@@ -475,29 +482,24 @@ class EbookContentService {
 
     for (final objMatch in objRegex.allMatches(content)) {
       try {
-        final streamStart = objMatch.start;
-        final streamKeywordIdx = content.indexOf('stream', streamStart);
+        final streamKeywordIdx = content.indexOf('stream', objMatch.start);
         if (streamKeywordIdx < 0) continue;
 
-        int dataStart = streamKeywordIdx + 6;
+        int dataStart = streamKeywordIdx + 6; // 'stream'.length
         if (dataStart < content.length && content[dataStart] == '\r') dataStart++;
         if (dataStart < content.length && content[dataStart] == '\n') dataStart++;
 
         final endstreamIdx = content.indexOf('endstream', dataStart);
         if (endstreamIdx < 0) continue;
+        if (dataStart >= endstreamIdx) continue;
 
-        // Convert string positions to byte positions
-        final prefixBytes = utf8.encode(content.substring(0, dataStart)).length;
-        final prefixEndBytes = utf8.encode(content.substring(0, endstreamIdx)).length;
-
-        if (prefixBytes >= prefixEndBytes) continue;
-
-        final compressed = bytes.sublist(prefixBytes, prefixEndBytes);
+        // latin1 => string index IS byte index, no need for utf8.encode conversion
+        final compressed = bytes.sublist(dataStart, endstreamIdx);
         if (compressed.isEmpty) continue;
 
         // Decompress with zlib
         final decompressed = zlib.decode(compressed);
-        final decodedContent = utf8.decode(decompressed, allowMalformed: true);
+        final decodedContent = latin1.decode(decompressed);
         final extracted = _extractTextFromContentStatic(decodedContent);
         if (extracted.isNotEmpty) {
           buffer.write(extracted);
