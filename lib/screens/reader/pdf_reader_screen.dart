@@ -230,13 +230,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               initialPageNumber: _currentPage + 1,
               enableTextSelection: true,
               // ── Book-like page turning ─────────────────
-              pageLayoutMode: PdfPageLayoutMode.single,
-              scrollDirection: PdfScrollDirection.horizontal,
+              pageLayoutMode: PdfPageLayoutMode.continuous,
+              scrollDirection: PdfScrollDirection.vertical,
               // ── UI chrome ──────────────────────────────
               canShowScrollHead: false,
               canShowScrollStatus: false,
               canShowPaginationDialog: false,
               canShowPageLoadingIndicator: true,
+              // ── Tap to toggle bars ──────────────────────
+              onTap: (_) => _toggleBars(),
               // ── Callbacks ──────────────────────────────
               onDocumentLoaded: (_) {
                 if (_pdfController != null) {
