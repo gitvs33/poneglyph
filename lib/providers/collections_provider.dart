@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import '../models/collection.dart';
-import '../repositories/book_repository.dart';
+import '../repositories/collection_repo.dart';
+import '../utils/initializable.dart';
 
 /// Single source of truth for collection state.
-/// Uses [BookRepository] for persistence and exposes
+/// Uses [CollectionRepo] for persistence and exposes
 /// all collection operations for screens and other providers.
-class CollectionsProvider extends ChangeNotifier {
-  final BookRepository _repo;
+class CollectionsProvider extends ChangeNotifier implements Initializable {
+  final CollectionRepo _repo;
   List<Collection> _collections = [];
   bool _isLoading = false;
   bool _isInitialized = false;
   bool _seeded = false;
 
-  CollectionsProvider({required BookRepository repo}) : _repo = repo;
+  CollectionsProvider({required CollectionRepo repo}) : _repo = repo;
 
   List<Collection> get collections => List.unmodifiable(_collections);
   bool get isLoading => _isLoading;

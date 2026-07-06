@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import '../models/book.dart';
-import '../repositories/book_repository.dart';
+import '../repositories/book_repo.dart';
+import '../utils/initializable.dart';
 
 enum LibraryViewMode { grid, list }
 enum LibrarySortBy { title, author, recent, progress }
 
 /// Manages the book library. Collections are managed by
 /// [CollectionsProvider] — this provider delegates to it.
-class LibraryProvider extends ChangeNotifier {
-  final BookRepository _repo;
+class LibraryProvider extends ChangeNotifier implements Initializable {
+  final BookRepo _repo;
 
   List<Book> _books = [];
   Book? _continueReading;
@@ -20,7 +21,7 @@ class LibraryProvider extends ChangeNotifier {
   String? _selectedTag;
   bool _isInitialized = false;
 
-  LibraryProvider({required BookRepository repo}) : _repo = repo;
+  LibraryProvider({required BookRepo repo}) : _repo = repo;
 
   // ── Public state ───────────────────────────────────────
 

@@ -2,17 +2,21 @@ import '../models/book.dart';
 import '../models/collection.dart';
 import '../models/highlight.dart';
 import '../models/reading_progress.dart';
-import 'book_repository.dart';
+import 'book_repo.dart';
+import 'collection_repo.dart';
+import 'highlight_repo.dart';
+import 'progress_repo.dart';
 
-/// In-memory adapter for development and testing.
-/// No disk I/O, no persistence across restarts.
-class InMemoryRepository implements BookRepository {
+/// Single adapter implementing all four repository interfaces.
+/// Keeps all entity data in memory — no disk I/O, no persistence across restarts.
+class InMemoryRepository
+    implements BookRepo, CollectionRepo, HighlightRepo, ProgressRepo {
   final List<Book> _books = [];
   final List<Collection> _collections = [];
   final List<Highlight> _highlights = [];
   final Map<String, ReadingProgress> _progress = {};
 
-  // ── Books ──────────────────────────────────────────────
+  // ── BookRepo ───────────────────────────────────────────
 
   @override
   Future<List<Book>> getBooks() async => List.unmodifiable(_books);
@@ -44,7 +48,7 @@ class InMemoryRepository implements BookRepository {
     _books.removeWhere((b) => b.id == id);
   }
 
-  // ── Collections ────────────────────────────────────────
+  // ── CollectionRepo ─────────────────────────────────────
 
   @override
   Future<List<Collection>> getCollections() async =>
@@ -65,7 +69,7 @@ class InMemoryRepository implements BookRepository {
     _collections.removeWhere((c) => c.id == id);
   }
 
-  // ── Highlights ─────────────────────────────────────────
+  // ── HighlightRepo ──────────────────────────────────────
 
   @override
   Future<List<Highlight>> getHighlights(String bookId) async =>
@@ -90,7 +94,7 @@ class InMemoryRepository implements BookRepository {
     _highlights.removeWhere((h) => h.id == id);
   }
 
-  // ── Reading Progress ───────────────────────────────────
+  // ── ProgressRepo ───────────────────────────────────────
 
   @override
   Future<ReadingProgress?> getProgress(String bookId) async =>
@@ -100,5 +104,4 @@ class InMemoryRepository implements BookRepository {
   Future<void> saveProgress(ReadingProgress progress) async {
     _progress[progress.bookId] = progress;
   }
-
 }

@@ -61,17 +61,6 @@ class ReaderProvider extends ChangeNotifier {
   String get currentChapterTitle =>
       currentChapter?.title ?? _currentBook?.title ?? '';
 
-  /// The text content for the *current page* of the current chapter.
-  /// Slices the chapter text by [_charsPerPage].
-  String get currentPageContent {
-    final ch = currentChapter;
-    if (ch == null || ch.content.isEmpty) return '';
-
-    final start = _currentPage * _charsPerPage;
-    final end = (start + _charsPerPage).clamp(0, ch.content.length);
-    return ch.content.substring(start, end).trim();
-  }
-
   // ── Content loading ────────────────────────────────────
 
   /// Load parsed ebook content into the reader.
@@ -82,9 +71,6 @@ class ReaderProvider extends ChangeNotifier {
     _totalPages = _chapters.isNotEmpty ? _chapters[0].estimatedPages : 0;
     notifyListeners();
   }
-
-  // Number of characters per "page" for slicing.
-  static const int _charsPerPage = 1500;
 
   // ── Session lifecycle ──────────────────────────────────
 

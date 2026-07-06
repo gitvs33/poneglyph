@@ -23,6 +23,17 @@ class ReaderScreen extends StatefulWidget {
 
 class _ReaderScreenState extends State<ReaderScreen>
     with SingleTickerProviderStateMixin {
+  // Characters per "page" for paginated text display — layout concern, not state.
+  static const int _charsPerPage = 1500;
+
+  /// Compute the text content for the current page from provider state.
+  String _computePageContent(ReaderProvider r) {
+    final ch = r.currentChapter;
+    if (ch == null || ch.content.isEmpty) return '';
+    final start = r.currentPage * _charsPerPage;
+    final end = (start + _charsPerPage).clamp(0, ch.content.length);
+    return ch.content.substring(start, end).trim();
+  }
   late ReaderProvider _reader;
   late AnimationController _barController;
   late Animation<double> _barAnimation;
@@ -216,8 +227,8 @@ class _ReaderScreenState extends State<ReaderScreen>
       );
     }
 
-    // Real content
-    final pageContent = reader.currentPageContent;
+    // Real content — compute page from provider state
+    final pageContent = _computePageContent(reader);
     final chapterTitle = reader.currentChapterTitle;
 
     final bodyTextStyle = TextStyle(

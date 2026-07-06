@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 import '../models/book.dart';
-import '../repositories/book_repository.dart';
+import '../repositories/book_repo.dart';
 
 /// Search state. Searches the actual book collection
-/// via [BookRepository] instead of hardcoded mock data.
+/// via [BookRepo] instead of hardcoded mock data.
 class SearchProvider extends ChangeNotifier {
-  final BookRepository _repo;
+  final BookRepo _repo;
 
   String _query = '';
   bool _isSearching = false;
   List<String> _recentSearches = [];
   List<SearchResult> _results = [];
 
-  SearchProvider({required BookRepository repo}) : _repo = repo;
+  SearchProvider({required BookRepo repo}) : _repo = repo;
 
   String get query => _query;
   bool get isSearching => _isSearching;
