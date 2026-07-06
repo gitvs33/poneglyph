@@ -8,6 +8,8 @@ import '../../providers/library_provider.dart';
 import '../../models/book.dart';
 import '../../models/highlight.dart';
 import '../../widgets/bottom_sheets.dart';
+import '../bookmarks_screen.dart';
+import '../import_backup_screen.dart';
 
 class ReaderScreen extends StatefulWidget {
   final Book book;
@@ -611,7 +613,26 @@ class _ReaderScreenState extends State<ReaderScreen>
                   title: 'Import/Export Annotations',
                   trailing: Icon(Icons.chevron_right,
                       color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
-                  onTap: () => Navigator.pop(context),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ImportBackupScreen()),
+                    );
+                  },
+                ),
+                _moreOptionTile(context,
+                  icon: Icons.bookmark,
+                  title: 'View All Bookmarks',
+                  trailing: Icon(Icons.chevron_right,
+                      color: sheetTheme.textTheme.bodySmall?.color?.withAlpha(120)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const BookmarksScreen()),
+                    );
+                  },
                 ),
                 _moreOptionTile(context,
                   icon: Icons.menu_book,

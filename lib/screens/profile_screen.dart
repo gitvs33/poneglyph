@@ -4,6 +4,8 @@ import '../../theme/design_tokens.dart';
 import '../../providers/reading_stats_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../utils/constants.dart';
+import 'import_backup_screen.dart';
+import 'advanced_settings_screen.dart';
 
 
 class ProfileScreen extends StatelessWidget {
@@ -35,7 +37,11 @@ class ProfileScreen extends StatelessWidget {
                     Text('Profile', style: theme.textTheme.displaySmall),
                     IconButton(
                       icon: const Icon(Icons.settings_outlined),
-                      onPressed: () {},
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const AdvancedSettingsScreen()),
+                      ),
                     ),
                   ],
                 ),
@@ -171,10 +177,23 @@ class ProfileScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       _menuItem(context, Icons.backup_outlined, 'Backup Library',
-                          'Export your data to cloud', () {}),
+                          'Export your data to cloud', () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const ImportBackupScreen()),
+                        );
+                      }),
                       const Divider(height: 1, indent: 16, endIndent: 16),
                       _menuItem(context, Icons.file_download_outlined, 'Export Data',
-                          'Download your library as a file', () {}),
+                          'Download your library as a file', () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content:
+                                Text('Export feature coming in next update'),
+                          ),
+                        );
+                      }),
                       const Divider(height: 1, indent: 16, endIndent: 16),
                       _menuItem(context, Icons.sync, 'Cloud Sync',
                           'Sync across devices', () {

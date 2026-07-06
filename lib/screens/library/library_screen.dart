@@ -5,6 +5,7 @@ import '../../providers/library_provider.dart';
 import '../../providers/collections_provider.dart';
 import '../../models/book.dart';
 import '../reader/reader_screen.dart';
+import '../filter_and_sort_screen.dart';
 enum _LibraryTab { all, books, collections, authors }
 
 class LibraryScreen extends StatefulWidget {
@@ -62,6 +63,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         icon: Icon(Icons.search,
                             color: theme.textTheme.bodyLarge?.color),
                         onPressed: () => _showSearchDialog(context, library),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                            minWidth: 36, minHeight: 36),
+                      ),
+                      // Filter icon
+                      IconButton(
+                        icon: Icon(Icons.filter_list,
+                            color: theme.textTheme.bodyLarge?.color),
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const FilterAndSortScreen()),
+                        ),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
                             minWidth: 36, minHeight: 36),
