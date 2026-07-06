@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'design_tokens.dart';
 
 enum AppThemeMode { light, dark, sepia, amoled, custom }
@@ -11,6 +10,16 @@ const kDarkSurface = Color(0xFF1A1A2E);     // Card surface
 const kDarkSurface2 = Color(0xFF16213E);    // Slightly lighter surface
 const kDarkText = Color(0xFFEAEAF4);        // Primary text
 const kDarkSubtext = Color(0xFF8888A8);     // Secondary text
+
+// Helper: creates a TextStyle with Inter-like sizing
+TextStyle _st(double size, FontWeight weight, Color color, {double? letterSpacing}) {
+  return TextStyle(
+    fontSize: size,
+    fontWeight: weight,
+    color: color,
+    letterSpacing: letterSpacing,
+  );
+}
 
 class AppTheme {
   final AppThemeMode mode;
@@ -77,40 +86,25 @@ class AppTheme {
       colorScheme: colorScheme,
       scaffoldBackgroundColor: background,
       cardColor: surface,
-      textTheme: GoogleFonts.interTextTheme().apply(
+      textTheme: ThemeData().textTheme.apply(
         bodyColor: text,
         displayColor: text,
       ).copyWith(
-        displayLarge: GoogleFonts.inter(
-            fontSize: 32, fontWeight: FontWeight.bold, color: text),
-        displayMedium: GoogleFonts.inter(
-            fontSize: 28, fontWeight: FontWeight.bold, color: text),
-        displaySmall: GoogleFonts.inter(
-            fontSize: 24, fontWeight: FontWeight.w600, color: text),
-        headlineLarge: GoogleFonts.inter(
-            fontSize: 22, fontWeight: FontWeight.w600, color: text),
-        headlineMedium: GoogleFonts.inter(
-            fontSize: 20, fontWeight: FontWeight.w600, color: text),
-        headlineSmall: GoogleFonts.inter(
-            fontSize: 18, fontWeight: FontWeight.w600, color: text),
-        titleLarge: GoogleFonts.inter(
-            fontSize: 16, fontWeight: FontWeight.w600, color: text),
-        titleMedium: GoogleFonts.inter(
-            fontSize: 14, fontWeight: FontWeight.w500, color: text),
-        titleSmall: GoogleFonts.inter(
-            fontSize: 12, fontWeight: FontWeight.w500, color: text),
-        bodyLarge: GoogleFonts.inter(
-            fontSize: 16, fontWeight: FontWeight.normal, color: text),
-        bodyMedium: GoogleFonts.inter(
-            fontSize: 14, fontWeight: FontWeight.normal, color: text),
-        bodySmall: GoogleFonts.inter(
-            fontSize: 12, fontWeight: FontWeight.normal, color: text),
-        labelLarge: GoogleFonts.inter(
-            fontSize: 14, fontWeight: FontWeight.w500, color: text),
-        labelMedium: GoogleFonts.inter(
-            fontSize: 12, fontWeight: FontWeight.w500, color: text),
-        labelSmall: GoogleFonts.inter(
-            fontSize: 10, fontWeight: FontWeight.w500, color: text),
+        displayLarge: _st(32, FontWeight.bold, text),
+        displayMedium: _st(28, FontWeight.bold, text),
+        displaySmall: _st(24, FontWeight.w600, text),
+        headlineLarge: _st(22, FontWeight.w600, text),
+        headlineMedium: _st(20, FontWeight.w600, text),
+        headlineSmall: _st(18, FontWeight.w600, text),
+        titleLarge: _st(16, FontWeight.w600, text),
+        titleMedium: _st(14, FontWeight.w500, text),
+        titleSmall: _st(12, FontWeight.w500, text),
+        bodyLarge: _st(16, FontWeight.normal, text),
+        bodyMedium: _st(14, FontWeight.normal, text),
+        bodySmall: _st(12, FontWeight.normal, text),
+        labelLarge: _st(14, FontWeight.w500, text),
+        labelMedium: _st(12, FontWeight.w500, text),
+        labelSmall: _st(10, FontWeight.w500, text),
       ),
       cardTheme: CardThemeData(
         elevation: 0,
@@ -126,8 +120,8 @@ class AppTheme {
         unselectedItemColor: text.withAlpha(100),
         type: BottomNavigationBarType.fixed,
         backgroundColor: surface,
-        selectedLabelStyle: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600),
-        unselectedLabelStyle: GoogleFonts.inter(fontSize: 10),
+        selectedLabelStyle: _st(10, FontWeight.w600, primary),
+        unselectedLabelStyle: _st(10, FontWeight.w500, text.withAlpha(100)),
       ),
       appBarTheme: AppBarTheme(
         elevation: 0,
@@ -135,11 +129,7 @@ class AppTheme {
         backgroundColor: background,
         foregroundColor: text,
         surfaceTintColor: Colors.transparent,
-        titleTextStyle: GoogleFonts.inter(
-          fontSize: 17,
-          fontWeight: FontWeight.w600,
-          color: text,
-        ),
+        titleTextStyle: _st(17, FontWeight.w600, text),
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: primary,
@@ -193,7 +183,7 @@ class AppTheme {
           borderSide: BorderSide(color: primary, width: 2),
         ),
         contentPadding: const EdgeInsets.all(DesignTokens.grid16),
-        hintStyle: GoogleFonts.inter(fontSize: 14, color: text.withAlpha(100)),
+        hintStyle: _st(14, FontWeight.normal, text.withAlpha(100)),
       ),
       dividerTheme: DividerThemeData(
         color: text.withAlpha(20),
@@ -214,7 +204,7 @@ class AppTheme {
       ),
       chipTheme: ChipThemeData(
         backgroundColor: primary.withAlpha(25),
-        labelStyle: GoogleFonts.inter(fontSize: 12, color: primary),
+        labelStyle: _st(12, FontWeight.w500, primary),
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(DesignTokens.radiusFull)),
         side: BorderSide.none,

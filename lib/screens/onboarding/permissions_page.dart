@@ -15,7 +15,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(DesignTokens.grid32),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,

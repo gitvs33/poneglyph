@@ -14,7 +14,7 @@ class ImportPage extends StatelessWidget {
       (Icons.cloud_upload_outlined, 'Dropbox', 'Import from Dropbox'),
     ];
 
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(DesignTokens.grid32),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
