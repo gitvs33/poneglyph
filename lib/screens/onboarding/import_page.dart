@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../models/book.dart';
@@ -16,92 +16,39 @@ class _ImportPageState extends State<ImportPage> {
   bool _isImporting = false;
 
   Future<void> _importFromDevice() async {
-    final controller = TextEditingController();
-    final path = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Import from Device'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Enter the directory path containing your EPUB, PDF, '
-              'or MOBI files.',
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                hintText: '/path/to/books',
-                labelText: 'Directory path',
-              ),
-              autofocus: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Scan'),
-          ),
-        ],
-      ),
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['epub', 'pdf', 'mobi'],
+      allowMultiple: true,
     );
 
-    if (path == null || path.isEmpty) return;
-
-    final dir = Directory(path);
-    if (!await dir.exists()) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Directory not found')),
-        );
-      }
-      return;
-    }
+    if (result == null || result.files.isEmpty) return;
 
     setState(() => _isImporting = true);
     final library = context.read<LibraryProvider>();
     int added = 0;
 
-    try {
-      await for (final entity
-          in dir.list(recursive: true, followLinks: false)) {
-        if (entity is! File) continue;
-        final ext = entity.path.split('.').last.toLowerCase();
-        BookFormat? format;
-        switch (ext) {
-          case 'epub':
-            format = BookFormat.epub;
-            break;
-          case 'pdf':
-            format = BookFormat.pdf;
-            break;
-          case 'mobi':
-            format = BookFormat.mobi;
-            break;
-        }
-        if (format == null) continue;
+    for (final file in result.files) {
+      final path = file.path;
+      if (path == null) continue;
 
-        final fileName = entity.path.split('/').last;
-        final title = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
-        await library.addBook(Book(
-          id: 'onboard_${DateTime.now().millisecondsSinceEpoch}_$added',
-          title: title,
-          author: 'Unknown',
-          format: format,
-          source: BookSource.device,
-          filePath: entity.path,
-          totalPages: 0,
-        ));
-        added++;
-      }
-    } catch (e) {
-      // ignore scanning errors
+      String ext = file.extension?.toLowerCase() ?? 'epub';
+      BookFormat format = BookFormat.epub;
+      if (ext == 'pdf') format = BookFormat.pdf;
+      if (ext == 'mobi') format = BookFormat.mobi;
+
+      final title = file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
+
+      await library.addBook(Book(
+        id: 'onboard_${DateTime.now().millisecondsSinceEpoch}_$added',
+        title: title,
+        author: 'Unknown',
+        format: format,
+        source: BookSource.device,
+        filePath: path,
+        totalPages: 0,
+      ));
+      added++;
     }
 
     setState(() => _isImporting = false);
