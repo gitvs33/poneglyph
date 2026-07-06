@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 
 import 'dart:typed_data';
@@ -382,34 +383,45 @@ class EbookContentService {
 
   /// Extract text from a PDF file.
   /// First tries simple regex on raw bytes (fast path for uncompressed PDFs).
-  /// If that yields no text, decompresses FlateDecode streams and extracts.
+  /// Extract text from a PDF file, running the heavy work on a background isolate.
   Future<String> _extractPdfText(Uint8List bytes) async {
+    // Move zlib decompression and regex to a background isolate
+    // so the UI thread doesn't freeze on large PDFs.
+    try {
+      return await Isolate.run(() => _extractPdfTextSync(bytes));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Synchronous PDF text extraction — designed to run on a background isolate.
+  static String _extractPdfTextSync(Uint8List bytes) {
     final content = utf8.decode(bytes, allowMalformed: true);
 
     // Fast path: try BT/ET on raw bytes (works for simple/uncompressed PDFs)
-    String text = _extractTextFromContent(content);
+    String text = _extractTextFromContentStatic(content);
     if (text.isNotEmpty) return text;
 
     // Slower path: find FlateDecode (zlib) streams, decompress, extract text
-    text = _extractTextFromFlateStreams(bytes, content);
+    text = _extractTextFromFlateStreamsStatic(bytes, content);
     if (text.isNotEmpty) return text;
 
     // Last resort: try extracting from any stream regardless of filter
-    final lastResort = _extractTextFromRawStreams(content);
+    final lastResort = _extractTextFromRawStreamsStatic(content);
     if (lastResort.isNotEmpty) return lastResort;
 
     return '';
   }
 
-  /// Extract text from BT/ET blocks in raw PDF content.
-  String _extractTextFromContent(String content) {
+  /// Extract text from BT/ET blocks in raw PDF content (static version).
+  static String _extractTextFromContentStatic(String content) {
     final buffer = StringBuffer();
     final btEtRegex = RegExp(r'BT\s*(.*?)\s*ET', dotAll: true);
     final matches = btEtRegex.allMatches(content);
 
     for (final match in matches) {
       final block = match.group(1)!;
-      final text = _extractOperators(block);
+      final text = _extractOperatorsStatic(block);
       buffer.write(text);
       buffer.write(' ');
     }
@@ -418,21 +430,21 @@ class EbookContentService {
   }
 
   /// Extract text from parentheses-based operators in a PDF content block.
-  String _extractOperators(String block) {
+  static String _extractOperatorsStatic(String block) {
     final buffer = StringBuffer();
 
     // (text) Tj  — single text show
     final tjRegex = RegExp(r'\(([^)]*)\)\s*Tj');
     for (final tm in tjRegex.allMatches(block)) {
-      buffer.write(_unescapePdfString(tm.group(1)!));
+      buffer.write(_unescapePdfStringStatic(tm.group(1)!));
       buffer.write(' ');
     }
 
     // [(text) num (text)] TJ  — array text show with positioning
-    final tjArrayRegex = RegExp(r'\(([^)]*)\)\s*(?:-?\d+(?:\.\d+)?\s*)?');
     for (final m in RegExp(r'\[(.*?)\]\s*TJ', dotAll: true).allMatches(block)) {
+      final tjArrayRegex = RegExp(r'\(([^)]*)\)\s*(?:-?\d+(?:\.\d+)?\s*)?');
       for (final item in tjArrayRegex.allMatches(m.group(1)!)) {
-        buffer.write(_unescapePdfString(item.group(1)!));
+        buffer.write(_unescapePdfStringStatic(item.group(1)!));
       }
       buffer.write(' ');
     }
@@ -440,8 +452,8 @@ class EbookContentService {
     return buffer.toString();
   }
 
-  /// Unescape PDF string escape sequences.
-  String _unescapePdfString(String s) {
+  /// Unescape PDF string escape sequences (static version).
+  static String _unescapePdfStringStatic(String s) {
     return s
         .replaceAll(r'\(', '(')
         .replaceAll(r'\)', ')')
@@ -451,13 +463,10 @@ class EbookContentService {
         .replaceAll(r'\\', '\\');
   }
 
-  /// Find FlateDecode streams, decompress them with zlib, and extract text.
-  String _extractTextFromFlateStreams(Uint8List bytes, String content) {
+  /// Find FlateDecode streams, decompress with zlib, extract text (static).
+  static String _extractTextFromFlateStreamsStatic(Uint8List bytes, String content) {
     final buffer = StringBuffer();
 
-    // Match stream objects with FlateDecode filter
-    // Pattern: << ... /Filter [/]FlateDecode ... >> ... stream\n...\nendstream
-    // First find streams with /FlateDecode
     final objRegex = RegExp(
       r'obj\s*<<[^>]*/Filter\s*\[?\s*/FlateDecode[^>]*>>\s*stream\r?\n(.*?)\r?\nendstream',
       dotAll: true,
@@ -465,25 +474,15 @@ class EbookContentService {
     );
 
     for (final objMatch in objRegex.allMatches(content)) {
-      final streamDataB64 = objMatch.group(1)!;
       try {
-        // Get the raw bytes of this stream from the original byte array.
-        // The regex match gives string positions; we need byte positions.
         final streamStart = objMatch.start;
-        // Find the actual stream bytes after "stream\n"
-        final contentBefore = content.substring(0, streamStart);
-        final byteOffset = utf8.encode(contentBefore).length;
-        final streamKeywordLen = 'stream\r\n'.length;
-
-        // Calculate where the compressed data starts in bytes
-        // This is approximate — scan for \n after "stream" keyword
         final streamKeywordIdx = content.indexOf('stream', streamStart);
         if (streamKeywordIdx < 0) continue;
-        int dataStart = streamKeywordIdx + 6; // 'stream'.length
+
+        int dataStart = streamKeywordIdx + 6;
         if (dataStart < content.length && content[dataStart] == '\r') dataStart++;
         if (dataStart < content.length && content[dataStart] == '\n') dataStart++;
 
-        // Find endstream
         final endstreamIdx = content.indexOf('endstream', dataStart);
         if (endstreamIdx < 0) continue;
 
@@ -491,13 +490,15 @@ class EbookContentService {
         final prefixBytes = utf8.encode(content.substring(0, dataStart)).length;
         final prefixEndBytes = utf8.encode(content.substring(0, endstreamIdx)).length;
 
+        if (prefixBytes >= prefixEndBytes) continue;
+
         final compressed = bytes.sublist(prefixBytes, prefixEndBytes);
         if (compressed.isEmpty) continue;
 
         // Decompress with zlib
         final decompressed = zlib.decode(compressed);
         final decodedContent = utf8.decode(decompressed, allowMalformed: true);
-        final extracted = _extractTextFromContent(decodedContent);
+        final extracted = _extractTextFromContentStatic(decodedContent);
         if (extracted.isNotEmpty) {
           buffer.write(extracted);
           buffer.write('\n');
@@ -510,11 +511,9 @@ class EbookContentService {
     return buffer.toString().trim();
   }
 
-  /// Fallback: extract text from any content stream (even non-FlateDecode).
-  String _extractTextFromRawStreams(String content) {
+  /// Fallback: extract text from any content stream (static version).
+  static String _extractTextFromRawStreamsStatic(String content) {
     final buffer = StringBuffer();
-
-    // Find all stream...endstream blocks
     final streamRegex = RegExp(
       r'stream\r?\n(.*?)\r?\nendstream',
       dotAll: true,
@@ -522,9 +521,8 @@ class EbookContentService {
 
     for (final match in streamRegex.allMatches(content)) {
       final raw = match.group(1)!;
-      // Try BT/ET on raw stream data (may work for uncompressed streams)
       try {
-        final text = _extractTextFromContent(raw);
+        final text = _extractTextFromContentStatic(raw);
         if (text.isNotEmpty) {
           buffer.write(text);
           buffer.write('\n');
