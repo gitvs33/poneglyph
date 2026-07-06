@@ -612,20 +612,4 @@ class EbookContentService {
     }
     return chapters;
   }
-
-  /// Fallback: read file as raw UTF-8 text (handles plain .txt files
-  /// that were given an ebook extension).
-  Future<EbookContent> _fallbackTextContent(File file, String label) async {
-    final text = await file.readAsString();
-    final title =
-        file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
-    final pages = max(1, (text.length / kCharsPerPage).ceil());
-    return EbookContent(
-      title: title,
-      author: 'Unknown',
-      chapters: [
-        EbookChapter(title: title, content: text, estimatedPages: pages),
-      ],
-    );
-  }
 }

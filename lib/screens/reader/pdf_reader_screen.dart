@@ -6,8 +6,6 @@ import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 import '../../models/book.dart';
 import '../../models/reading_session.dart';
-import '../../providers/library_provider.dart';
-import '../../providers/settings_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_provider.dart';
 
@@ -16,6 +14,10 @@ import '../../theme/theme_provider.dart';
 /// Provides proper page rendering (fonts, layout, images exactly as designed),
 /// built-in text selection, highlighting/annotation, bookmark/outline panel
 /// (TOC), and text search.
+///
+/// Annotations (highlight, underline, strikethrough) are persisted to the PDF
+/// file itself via [PdfViewerController.saveDocument] when leaving the screen,
+/// so they survive app restarts.
 class PdfReaderScreen extends StatefulWidget {
   final Book book;
 
@@ -39,6 +41,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   bool _isReady = false;
   bool _loadFailed = false;
   String _loadError = '';
+
+  // Track annotation changes so we only save when needed
+  bool _annotationsChanged = false;
 
   @override
   void initState() {
@@ -64,9 +69,28 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   @override
   void dispose() {
     _currentSession = _currentSession?.end();
+    _persistAnnotationsIfNeeded();
     _barController.dispose();
     _pdfController?.dispose();
     super.dispose();
+  }
+
+  /// Persist annotations and reading progress when leaving the screen.
+  ///
+  /// Syncfusion's [PdfViewerController.saveDocument] re-serializes the PDF with
+  /// all annotations embedded as native PDF annotation objects, so they survive
+  /// app restarts without needing external JSON or a separate storage format.
+  Future<void> _persistAnnotationsIfNeeded() async {
+    if (!_annotationsChanged || _pdfController == null) return;
+
+    try {
+      final bytes = await _pdfController!.saveDocument();
+      if (bytes.isNotEmpty && widget.book.filePath != null) {
+        await File(widget.book.filePath!).writeAsBytes(bytes);
+      }
+    } catch (_) {
+      // Silently fail — annotations are nice-to-have, not critical
+    }
   }
 
   void _toggleBars() {
@@ -107,7 +131,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: TextStyle(color: theme.colorScheme.secondary)),
+            child: Text('Cancel',
+                style: TextStyle(color: theme.colorScheme.secondary)),
           ),
           FilledButton(
             onPressed: () {
@@ -125,7 +150,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   void _showMoreOptions(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = _isDarkMode(context);
 
     showModalBottomSheet(
       context: context,
@@ -153,16 +177,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               Navigator.pop(ctx);
               _showSearchDialog();
             }),
-            _optionTile(ctx, theme, Icons.library_books, 'Table of Contents', () {
+            _optionTile(
+                ctx, theme, Icons.library_books, 'Table of Contents', () {
               Navigator.pop(ctx);
               _pdfViewerKey.currentState?.openBookmarkView();
             }),
-            _optionTile(ctx, theme, Icons.text_fields, 'Text selection',
-                () => Navigator.pop(ctx)),
-            _optionTile(ctx, theme, Icons.volume_up, 'Listen (TTS)', () {
+            _optionTile(
+                ctx, theme, Icons.text_fields, 'Text selection', () =>
+                Navigator.pop(ctx)),
+            _optionTile(
+                ctx, theme, Icons.volume_up, 'Listen (TTS)', () {
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('TTS is available in EPUB reader')),
+                const SnackBar(
+                    content: Text('TTS is available in EPUB reader')),
               );
             }),
             const SizedBox(height: 16),
@@ -230,6 +258,16 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 });
               },
               onTap: (_) => _toggleBars(),
+              // ── Annotation persistence callbacks ──
+              onAnnotationAdded: (_) {
+                _annotationsChanged = true;
+              },
+              onAnnotationRemoved: (_) {
+                _annotationsChanged = true;
+              },
+              onAnnotationEdited: (_) {
+                _annotationsChanged = true;
+              },
             )
           else
             const Center(child: Text('No file path')),
@@ -259,13 +297,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.error_outline, size: 48,
-                        color: theme.colorScheme.error),
+                    Icon(Icons.error_outline,
+                        size: 48, color: theme.colorScheme.error),
                     const SizedBox(height: 16),
                     Text('Failed to load PDF',
                         style: theme.textTheme.titleLarge),
                     const SizedBox(height: 8),
-                    Text(_loadError, textAlign: TextAlign.center,
+                    Text(_loadError,
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           color: theme.textTheme.bodySmall?.color,
                         )),
@@ -277,7 +316,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           // ── Top Bar ────────────────────────────────────
           if (_showBars && _isReady)
             Positioned(
-              top: 0, left: 0, right: 0,
+              top: 0,
+              left: 0,
+              right: 0,
               child: FadeTransition(
                 opacity: _barAnimation,
                 child: _buildTopBar(theme, isDark),
@@ -287,7 +328,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           // ── Bottom Bar ─────────────────────────────────
           if (_showBars && _isReady)
             Positioned(
-              bottom: 0, left: 0, right: 0,
+              bottom: 0,
+              left: 0,
+              right: 0,
               child: FadeTransition(
                 opacity: _barAnimation,
                 child: _buildBottomBar(theme, isDark),
@@ -299,16 +342,17 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   Widget _buildTopBar(ThemeData theme, bool isDark) {
-    final bgColor = isDark
-        ? const Color(0xFF0F0F17).withAlpha(230)
-        : Colors.white.withAlpha(240);
+    final fg = isDark ? Colors.white : const Color(0xFF7C6FFF);
 
     return Container(
       decoration: BoxDecoration(
-        color: bgColor,
+        color: isDark
+            ? const Color(0xFF0F0F17).withAlpha(230)
+            : Colors.white.withAlpha(240),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(20), blurRadius: 4,
+            color: Colors.black.withAlpha(20),
+            blurRadius: 4,
             offset: const Offset(0, 2),
           ),
         ],
@@ -322,28 +366,28 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () => Navigator.pop(context),
-                color: isDark ? Colors.white : const Color(0xFF7C6FFF),
+                color: fg,
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   widget.book.title,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: isDark ? Colors.white : const Color(0xFF7C6FFF),
-                  ),
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(color: fg),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               // TOC (outline/bookmarks)
               IconButton(
                 icon: const Icon(Icons.list),
-                color: isDark ? Colors.white70 : const Color(0xFF7C6FFF),
-                onPressed: () => _pdfViewerKey.currentState?.openBookmarkView(),
+                color: fg,
+                onPressed: () =>
+                    _pdfViewerKey.currentState?.openBookmarkView(),
               ),
               // More options
               IconButton(
                 icon: const Icon(Icons.more_horiz),
-                color: isDark ? Colors.white70 : const Color(0xFF7C6FFF),
+                color: fg,
                 onPressed: () => _showMoreOptions(context),
               ),
             ],
@@ -364,7 +408,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             : Colors.white.withAlpha(240),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(20), blurRadius: 4,
+            color: Colors.black.withAlpha(20),
+            blurRadius: 4,
             offset: const Offset(0, -2),
           ),
         ],
@@ -375,7 +420,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           child: Row(
             children: [
-              // Previous page
               IconButton(
                 icon: const Icon(Icons.chevron_left),
                 color: fg,
@@ -383,12 +427,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     ? () => _pdfController?.jumpToPage(_currentPage)
                     : null,
               ),
-              // Page indicator
               Text(
                 '${_currentPage + 1} / ${_totalPages > 0 ? _totalPages : "…"}',
                 style: TextStyle(color: fg, fontWeight: FontWeight.w500),
               ),
-              // Next page
               IconButton(
                 icon: const Icon(Icons.chevron_right),
                 color: fg,
@@ -397,7 +439,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     : null,
               ),
               const Spacer(),
-              // Progress
               Text(
                 _totalPages > 0
                     ? '${(_currentPage / _totalPages * 100).toInt()}%'

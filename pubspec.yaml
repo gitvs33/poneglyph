@@ -9,7 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.8
   provider: ^6.1.2
   shared_preferences: ^2.3.4
   intl: ^0.20.2
@@ -17,9 +16,7 @@ dependencies:
   epubx: ^4.0.0
   archive: ^3.6.1
   xml: ^6.6.1
-  pdf: ^3.8.4
   path_provider: ^2.1.6
-  pdfx: ^2.9.2
   syncfusion_flutter_pdfviewer: ^33.2.13
 dev_dependencies:
   flutter_test:
