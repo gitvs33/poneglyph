@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:file_picker/file_picker.dart';
+import 'dart:io';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../models/book.dart';
 
-/// Merged Import & Backup screen with REAL file importing.
+/// Merged Import & Backup screen with file-scan based importing.
 ///
-/// "From Device" opens the native file picker for EPUB/PDF/MOBI files.
+/// "From Device" scans a user-specified directory for EPUB/PDF/MOBI files.
 /// "From URL" shows a dialog to paste a download link.
 /// Other sources show "Coming soon".
 class ImportBackupScreen extends StatefulWidget {
@@ -21,28 +21,67 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
   bool _isImporting = false;
 
   Future<void> _importFromDevice() async {
+    final controller = TextEditingController();
+    final path = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import from Device'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Enter the directory path containing your EPUB, PDF, '
+              'or MOBI files.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                hintText: '/path/to/books',
+                labelText: 'Directory path',
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Scan'),
+          ),
+        ],
+      ),
+    );
+
+    if (path == null || path.isEmpty) return;
+
+    final dir = Directory(path);
+    if (!await dir.exists()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Directory not found'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isImporting = true);
+    final library = context.read<LibraryProvider>();
+    int added = 0;
+
     try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['epub', 'pdf', 'mobi'],
-        allowMultiple: true,
-      );
-
-      if (result == null || result.files.isEmpty) return;
-
-      setState(() => _isImporting = true);
-      final library = context.read<LibraryProvider>();
-      int added = 0;
-
-      for (final file in result.files) {
-        if (file.path == null) continue;
-
-        final filePath = file.path!;
-        final fileName = file.name;
-        final ext = (file.extension ?? '').toLowerCase();
-
-        // Determine format from extension
-        BookFormat format;
+      await for (final entity
+          in dir.list(recursive: true, followLinks: false)) {
+        if (entity is! File) continue;
+        final ext = entity.path.split('.').last.toLowerCase();
+        BookFormat? format;
         switch (ext) {
           case 'epub':
             format = BookFormat.epub;
@@ -53,54 +92,37 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
           case 'mobi':
             format = BookFormat.mobi;
             break;
-          default:
-            continue; // skip unknown
         }
+        if (format == null) continue;
 
-        // Extract title from filename (strip extension)
+        final fileName = entity.path.split('/').last;
         final title = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
-
-        // Create a unique ID from path + timestamp
-        final id = 'book_${DateTime.now().millisecondsSinceEpoch}_$added';
-
-        final book = Book(
-          id: id,
+        await library.addBook(Book(
+          id: 'import_${DateTime.now().millisecondsSinceEpoch}_$added',
           title: title,
           author: 'Unknown',
           format: format,
           source: BookSource.device,
-          filePath: filePath,
+          filePath: entity.path,
           totalPages: 0,
-        );
-
-        await library.addBook(book);
+        ));
         added++;
       }
-
-      setState(() => _isImporting = false);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              added == 1
-                  ? 'Imported 1 book'
-                  : 'Imported $added books',
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
     } catch (e) {
-      setState(() => _isImporting = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Import failed: $e'),
-            behavior: SnackBarBehavior.floating,
+      // ignore scanning errors
+    }
+
+    setState(() => _isImporting = false);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            added == 1 ? 'Imported 1 book' : 'Imported $added books',
           ),
-        );
-      }
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -134,16 +156,14 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
 
     if (url == null || url.isEmpty) return;
 
-    // Extract filename from URL for the title
     final uri = Uri.tryParse(url);
     final pathSegments = uri?.pathSegments ?? [];
     final fileName = pathSegments.isNotEmpty ? pathSegments.last : 'book';
     final title = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
-
-    // Guess format from extension
     final ext = fileName.contains('.')
         ? fileName.split('.').last.toLowerCase()
         : 'epub';
+
     BookFormat format;
     switch (ext) {
       case 'pdf':
@@ -193,69 +213,69 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    const importOptions = [
+    final importOptions = [
       _ImportOptionData(
         icon: Icons.phone_android,
         title: 'From Device',
         subtitle: 'Browse EPUB, PDF, MOBI files',
-        color: Color(0xFF6C63FF),
+        color: const Color(0xFF6C63FF),
       ),
       _ImportOptionData(
         icon: Icons.link,
         title: 'From URL',
         subtitle: 'Download from a web link',
-        color: Color(0xFF45B7D1),
+        color: const Color(0xFF45B7D1),
       ),
       _ImportOptionData(
         icon: Icons.folder_zip_outlined,
         title: 'From ZIP',
         subtitle: 'Import compressed archives',
-        color: Color(0xFFFFAA44),
+        color: const Color(0xFFFFAA44),
       ),
       _ImportOptionData(
         icon: Icons.folder_open,
         title: 'From Folder',
         subtitle: 'Import an entire folder',
-        color: Color(0xFF81C784),
+        color: const Color(0xFF81C784),
       ),
       _ImportOptionData(
         icon: Icons.drive_file_move_outlined,
         title: 'Google Drive',
         subtitle: 'Sync from your Drive',
-        color: Color(0xFF4285F4),
+        color: const Color(0xFF4285F4),
       ),
       _ImportOptionData(
         icon: Icons.cloud_upload_outlined,
         title: 'Dropbox',
         subtitle: 'Import from Dropbox',
-        color: Color(0xFF007EE5),
+        color: const Color(0xFF007EE5),
       ),
       _ImportOptionData(
         icon: Icons.more_horiz,
         title: 'More Sources',
         subtitle: 'Discover more import options',
-        color: Color(0xFF888888),
+        color: const Color(0xFF888888),
       ),
     ];
 
-    const backupOptions = [
+    final backupOptions = [
       _BackupOptionData(
         icon: Icons.drive_file_move_outlined,
         title: 'Google Drive',
         subtitle: 'Last sync: Today, 9:41 AM',
-        color: Color(0xFF4285F4),
+        color: const Color(0xFF4285F4),
       ),
       _BackupOptionData(
         icon: Icons.cloud_upload_outlined,
         title: 'Dropbox',
         subtitle: 'Last sync: Yesterday',
-        color: Color(0xFF007EE5),
+        color: const Color(0xFF007EE5),
       ),
       _BackupOptionData(
         icon: Icons.sync,
         title: 'Auto Backup',
         subtitle: 'Wi-Fi only',
-        color: Color(0xFF34C759),
+        color: const Color(0xFF34C759),
       ),
     ];
 
@@ -263,7 +283,7 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // ── Header ──────────────────────────────────────
+            // ── Header
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 DesignTokens.grid4,
@@ -283,14 +303,13 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
               ),
             ),
 
-            // ── Scrollable body ──────────────────────────────
+            // ── Scrollable body
             Expanded(
               child: Stack(
                 children: [
                   ListView(
                     padding: const EdgeInsets.only(bottom: DesignTokens.grid16),
                     children: [
-                      //  ··· Import Books section ···
                       Padding(
                         padding: const EdgeInsets.fromLTRB(
                           DesignTokens.grid24,
@@ -315,10 +334,7 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
                           _comingSoon,
                         ),
                       ),
-
                       const SizedBox(height: DesignTokens.grid16),
-
-                      //  ··· Backup & Sync section ···
                       Padding(
                         padding: const EdgeInsets.fromLTRB(
                           DesignTokens.grid24,
@@ -338,8 +354,6 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
                       ),
                     ],
                   ),
-
-                  // Loading overlay
                   if (_isImporting)
                     Container(
                       color: Colors.black26,
@@ -351,7 +365,7 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
               ),
             ),
 
-            // ── Sync Now button (pinned to bottom) ──────────
+            // ── Sync Now button
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 DesignTokens.grid16,
@@ -458,8 +472,6 @@ class _ImportBackupScreenState extends State<ImportBackupScreen> {
     );
   }
 }
-
-// ── Private data classes ──────────────────────────────────────
 
 class _ImportOptionData {
   final IconData icon;

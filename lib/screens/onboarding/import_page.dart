@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
+import 'dart:io';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../models/book.dart';
@@ -16,22 +16,64 @@ class _ImportPageState extends State<ImportPage> {
   bool _isImporting = false;
 
   Future<void> _importFromDevice() async {
+    final controller = TextEditingController();
+    final path = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import from Device'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Enter the directory path containing your EPUB, PDF, '
+              'or MOBI files.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                hintText: '/path/to/books',
+                labelText: 'Directory path',
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Scan'),
+          ),
+        ],
+      ),
+    );
+
+    if (path == null || path.isEmpty) return;
+
+    final dir = Directory(path);
+    if (!await dir.exists()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Directory not found')),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isImporting = true);
+    final library = context.read<LibraryProvider>();
+    int added = 0;
+
     try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['epub', 'pdf', 'mobi'],
-        allowMultiple: true,
-      );
-
-      if (result == null || result.files.isEmpty) return;
-
-      setState(() => _isImporting = true);
-      final library = context.read<LibraryProvider>();
-
-      for (final file in result.files) {
-        if (file.path == null) continue;
-        final ext = (file.extension ?? '').toLowerCase();
-        BookFormat format;
+      await for (final entity
+          in dir.list(recursive: true, followLinks: false)) {
+        if (entity is! File) continue;
+        final ext = entity.path.split('.').last.toLowerCase();
+        BookFormat? format;
         switch (ext) {
           case 'epub':
             format = BookFormat.epub;
@@ -42,32 +84,31 @@ class _ImportPageState extends State<ImportPage> {
           case 'mobi':
             format = BookFormat.mobi;
             break;
-          default:
-            continue;
         }
-        final title = file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
+        if (format == null) continue;
+
+        final fileName = entity.path.split('/').last;
+        final title = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
         await library.addBook(Book(
-          id: 'onboard_${DateTime.now().millisecondsSinceEpoch}',
+          id: 'onboard_${DateTime.now().millisecondsSinceEpoch}_$added',
           title: title,
           author: 'Unknown',
           format: format,
           source: BookSource.device,
-          filePath: file.path,
+          filePath: entity.path,
           totalPages: 0,
         ));
-      }
-
-      setState(() => _isImporting = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${result.files.length} book(s) imported'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        added++;
       }
     } catch (e) {
-      setState(() => _isImporting = false);
+      // ignore scanning errors
+    }
+
+    setState(() => _isImporting = false);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$added book(s) imported')),
+      );
     }
   }
 
@@ -134,7 +175,7 @@ class _ImportPageState extends State<ImportPage> {
                   subtitle: Text(option.$3, style: theme.textTheme.bodySmall),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: isDevice
-                      ? (_isImporting ? null : () => _importFromDevice())
+                      ? (_isImporting ? null : _importFromDevice)
                       : null,
                 ),
               ),
