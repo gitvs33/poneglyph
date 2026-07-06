@@ -11,6 +11,7 @@ import '../../models/book.dart';
 import '../reader/pdf_reader_screen.dart';
 import '../reader/reader_screen.dart';
 import '../filter_and_sort_screen.dart';
+import '../../services/cover_cache.dart';
 enum _LibraryTab { all, books, collections, authors }
 
 class LibraryScreen extends StatefulWidget {
@@ -619,6 +620,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
           totalPages: defaultPages,
         ));
         added++;
+
+        // Asynchronously extract and cache cover image for EPUB books.
+        if (format == BookFormat.epub) {
+          final book =
+              library.allBooks.lastWhere((b) => b.filePath == localPath);
+          _cacheCoverAsync(book.id, localPath, library);
+        }
       }
 
 
@@ -718,6 +726,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
     }
   }
+
+  /// Extract and cache the cover image for an imported book.
+  Future<void> _cacheCoverAsync(
+      String bookId, String filePath, LibraryProvider library) async {
+    final coverUrl = await CoverCache.cacheCover(bookId, filePath);
+    if (coverUrl != null && mounted) {
+      library.updateBookCover(bookId, coverUrl);
+    }
+  }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -781,24 +798,18 @@ class _BookGridItem extends StatelessWidget {
                       ),
                     ),
                   )
+                else if (book.coverUrl != null && book.coverUrl!.isNotEmpty)
+                  ClipRRect(
+                    borderRadius:
+                        BorderRadius.circular(DesignTokens.radiusMd),
+                    child: Image.file(
+                      File(book.coverUrl!),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _a, _b) => _buildInitialsCard(book),
+                    ),
+                  )
                 else
-                  Container(
-                    decoration: BoxDecoration(
-                      color: _coverColor(book.title),
-                      borderRadius:
-                          BorderRadius.circular(DesignTokens.radiusMd),
-                    ),
-                    child: Center(
-                      child: Text(
-                        _coverInitials(book.title),
-                        style: TextStyle(
-                          fontSize: 40,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white.withAlpha(200),
-                        ),
-                      ),
-                    ),
-                  ),
+                  _buildInitialsCard(book),
                 // Progress badge in bottom-right
                 if (book.progress > 0)
                   Positioned(
@@ -895,5 +906,25 @@ class _BookGridItem extends StatelessWidget {
       Color(0xFF1E3A3A), // dark teal
     ];
     return colors[title.length % colors.length];
+  }
+
+  /// Fallback card with colored background and initials.
+  Widget _buildInitialsCard(Book book) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _coverColor(book.title),
+        borderRadius: BorderRadius.circular(DesignTokens.radiusMd),
+      ),
+      child: Center(
+        child: Text(
+          _coverInitials(book.title),
+          style: TextStyle(
+            fontSize: 40,
+            fontWeight: FontWeight.bold,
+            color: Colors.white.withAlpha(200),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -172,7 +172,14 @@ class LibraryProvider extends ChangeNotifier implements Initializable {
     notifyListeners();
   }
 
-  // ── Private helpers ────────────────────────────────────
+  /// Update the book's cover image URL (called from cover cache).
+  void updateBookCover(String bookId, String? coverUrl) {
+    final index = _books.indexWhere((b) => b.id == bookId);
+    if (index != -1) {
+      _books[index] = _books[index].copyWith(coverUrl: coverUrl);
+      notifyListeners();
+    }
+  }
 
   void _recalcContinueReading() {
     final inProgress = _books
