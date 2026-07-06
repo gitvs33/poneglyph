@@ -380,34 +380,156 @@ class EbookContentService {
     }
   }
 
-  /// Basic PDF text extraction from raw bytes.
-  /// Looks for text objects between BT and ET markers and extracts
-  /// strings inside parentheses.  Works for simple/plain PDFs.
+  /// Extract text from a PDF file.
+  /// First tries simple regex on raw bytes (fast path for uncompressed PDFs).
+  /// If that yields no text, decompresses FlateDecode streams and extracts.
   Future<String> _extractPdfText(Uint8List bytes) async {
     final content = utf8.decode(bytes, allowMalformed: true);
-    final buffer = StringBuffer();
 
-    // Find all BT...ET blocks (text objects)
+    // Fast path: try BT/ET on raw bytes (works for simple/uncompressed PDFs)
+    String text = _extractTextFromContent(content);
+    if (text.isNotEmpty) return text;
+
+    // Slower path: find FlateDecode (zlib) streams, decompress, extract text
+    text = _extractTextFromFlateStreams(bytes, content);
+    if (text.isNotEmpty) return text;
+
+    // Last resort: try extracting from any stream regardless of filter
+    final lastResort = _extractTextFromRawStreams(content);
+    if (lastResort.isNotEmpty) return lastResort;
+
+    return '';
+  }
+
+  /// Extract text from BT/ET blocks in raw PDF content.
+  String _extractTextFromContent(String content) {
+    final buffer = StringBuffer();
     final btEtRegex = RegExp(r'BT\s*(.*?)\s*ET', dotAll: true);
     final matches = btEtRegex.allMatches(content);
 
     for (final match in matches) {
       final block = match.group(1)!;
-      // Extract text inside parentheses Tj or TJ operators
-      // Handle (text) Tj  and  [(text) num (text)] TJ
-      final textRegex = RegExp(r'\(([^)]*)\)\s*Tj');
-      final textMatches = textRegex.allMatches(block);
-      for (final tm in textMatches) {
-        String text = tm.group(1)!;
-        // Handle PDF escape sequences
-        text = text
-            .replaceAll(r'\(', '(')
-            .replaceAll(r'\)', ')')
-            .replaceAll(r'\n', '\n')
-            .replaceAll(r'\r', '\r');
-        buffer.write(text);
-        buffer.write(' ');
+      final text = _extractOperators(block);
+      buffer.write(text);
+      buffer.write(' ');
+    }
+
+    return buffer.toString().trim();
+  }
+
+  /// Extract text from parentheses-based operators in a PDF content block.
+  String _extractOperators(String block) {
+    final buffer = StringBuffer();
+
+    // (text) Tj  — single text show
+    final tjRegex = RegExp(r'\(([^)]*)\)\s*Tj');
+    for (final tm in tjRegex.allMatches(block)) {
+      buffer.write(_unescapePdfString(tm.group(1)!));
+      buffer.write(' ');
+    }
+
+    // [(text) num (text)] TJ  — array text show with positioning
+    final tjArrayRegex = RegExp(r'\(([^)]*)\)\s*(?:-?\d+(?:\.\d+)?\s*)?');
+    for (final m in RegExp(r'\[(.*?)\]\s*TJ', dotAll: true).allMatches(block)) {
+      for (final item in tjArrayRegex.allMatches(m.group(1)!)) {
+        buffer.write(_unescapePdfString(item.group(1)!));
       }
+      buffer.write(' ');
+    }
+
+    return buffer.toString();
+  }
+
+  /// Unescape PDF string escape sequences.
+  String _unescapePdfString(String s) {
+    return s
+        .replaceAll(r'\(', '(')
+        .replaceAll(r'\)', ')')
+        .replaceAll(r'\n', '\n')
+        .replaceAll(r'\r', '\r')
+        .replaceAll(r'\t', '\t')
+        .replaceAll(r'\\', '\\');
+  }
+
+  /// Find FlateDecode streams, decompress them with zlib, and extract text.
+  String _extractTextFromFlateStreams(Uint8List bytes, String content) {
+    final buffer = StringBuffer();
+
+    // Match stream objects with FlateDecode filter
+    // Pattern: << ... /Filter [/]FlateDecode ... >> ... stream\n...\nendstream
+    // First find streams with /FlateDecode
+    final objRegex = RegExp(
+      r'obj\s*<<[^>]*/Filter\s*\[?\s*/FlateDecode[^>]*>>\s*stream\r?\n(.*?)\r?\nendstream',
+      dotAll: true,
+      caseSensitive: false,
+    );
+
+    for (final objMatch in objRegex.allMatches(content)) {
+      final streamDataB64 = objMatch.group(1)!;
+      try {
+        // Get the raw bytes of this stream from the original byte array.
+        // The regex match gives string positions; we need byte positions.
+        final streamStart = objMatch.start;
+        // Find the actual stream bytes after "stream\n"
+        final contentBefore = content.substring(0, streamStart);
+        final byteOffset = utf8.encode(contentBefore).length;
+        final streamKeywordLen = 'stream\r\n'.length;
+
+        // Calculate where the compressed data starts in bytes
+        // This is approximate — scan for \n after "stream" keyword
+        final streamKeywordIdx = content.indexOf('stream', streamStart);
+        if (streamKeywordIdx < 0) continue;
+        int dataStart = streamKeywordIdx + 6; // 'stream'.length
+        if (dataStart < content.length && content[dataStart] == '\r') dataStart++;
+        if (dataStart < content.length && content[dataStart] == '\n') dataStart++;
+
+        // Find endstream
+        final endstreamIdx = content.indexOf('endstream', dataStart);
+        if (endstreamIdx < 0) continue;
+
+        // Convert string positions to byte positions
+        final prefixBytes = utf8.encode(content.substring(0, dataStart)).length;
+        final prefixEndBytes = utf8.encode(content.substring(0, endstreamIdx)).length;
+
+        final compressed = bytes.sublist(prefixBytes, prefixEndBytes);
+        if (compressed.isEmpty) continue;
+
+        // Decompress with zlib
+        final decompressed = zlib.decode(compressed);
+        final decodedContent = utf8.decode(decompressed, allowMalformed: true);
+        final extracted = _extractTextFromContent(decodedContent);
+        if (extracted.isNotEmpty) {
+          buffer.write(extracted);
+          buffer.write('\n');
+        }
+      } catch (_) {
+        // Skip streams that fail to decompress
+      }
+    }
+
+    return buffer.toString().trim();
+  }
+
+  /// Fallback: extract text from any content stream (even non-FlateDecode).
+  String _extractTextFromRawStreams(String content) {
+    final buffer = StringBuffer();
+
+    // Find all stream...endstream blocks
+    final streamRegex = RegExp(
+      r'stream\r?\n(.*?)\r?\nendstream',
+      dotAll: true,
+    );
+
+    for (final match in streamRegex.allMatches(content)) {
+      final raw = match.group(1)!;
+      // Try BT/ET on raw stream data (may work for uncompressed streams)
+      try {
+        final text = _extractTextFromContent(raw);
+        if (text.isNotEmpty) {
+          buffer.write(text);
+          buffer.write('\n');
+        }
+      } catch (_) {}
     }
 
     return buffer.toString().trim();
