@@ -67,34 +67,27 @@ class EbookContentService {
   Future<EbookContent> _readEpub(File file) async {
     final bytes = await file.readAsBytes();
 
-    // Try epubx first (handles most well-formed EPUBs).
+    // Parse EPUB directly via archive package — handles all
+    // standard EPUB structures regardless of TOC format.
+    // Only falls back to epubx for cover image extraction.
+    final result = await _readEpubManual(bytes, file);
+
+    // Try to get cover image from epubx (nice-to-have).
     try {
       final book = await EpubReader.readBook(bytes);
-
-      final chapters = <EbookChapter>[];
-      if (book.Chapters != null) {
-        for (final ch in book.Chapters!) {
-          chapters.add(_epubChapterToEbook(ch));
-        }
+      if (result.coverImageBytes == null && book.CoverImage != null) {
+        return EbookContent(
+          title: result.title,
+          author: result.author,
+          chapters: result.chapters,
+          coverImageBytes: book.CoverImage!.getBytes(),
+        );
       }
-      final flat = _flattenChapters(chapters);
-
-      final coverBytes =
-          book.CoverImage != null ? book.CoverImage!.getBytes() : null;
-
-      return EbookContent(
-        title: book.Title ?? file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), ''),
-        author: book.Author ?? 'Unknown',
-        chapters: flat,
-        coverImageBytes: coverBytes,
-      );
     } catch (_) {
-      // epubx failed — fall back to manual parsing.
-      // Some EPUBs use non-standard structures that confuse epubx.
+      // Cover image is optional — ignore failures.
     }
 
-    // Manual EPUB parsing via archive package.
-    return _readEpubManual(bytes, file);
+    return result;
   }
 
   /// Parse an EPUB using the [archive] package directly.
@@ -114,7 +107,11 @@ class EbookContentService {
     }
 
     // 2. Parse container.xml to get rootfile (OPF) path
-    final containerXml = utf8.decode(containerFile.content as List<int>);
+    final containerRaw = containerFile.content;
+    if (containerRaw == null) {
+      throw Exception('Invalid EPUB: empty container.xml');
+    }
+    final containerXml = _decodeEntryText(containerRaw);
     String opfPath;
     try {
       final doc = XmlDocument.parse(containerXml);
@@ -137,8 +134,11 @@ class EbookContentService {
     if (opfEntry == null) {
       throw Exception('Invalid EPUB: OPF file not found: $opfPath');
     }
-
-    final opfXml = utf8.decode(opfEntry.content as List<int>);
+    final opfRaw = opfEntry.content;
+    if (opfRaw == null) {
+      throw Exception('Invalid EPUB: empty OPF file');
+    }
+    final opfXml = _decodeEntryText(opfRaw);
     late XmlDocument opfDoc;
     try {
       opfDoc = XmlDocument.parse(opfXml);
@@ -170,11 +170,10 @@ class EbookContentService {
     String author = '';
     final metadata = opfDoc.findAllElements('metadata').firstOrNull;
     if (metadata != null) {
-      final titleEl = metadata.findElements('title').firstOrNull;
+      final titleEl = metadata.findElements('title', namespace: '*').firstOrNull;
       if (titleEl != null) title = titleEl.innerText.trim();
 
-      // dc:creator with namespace
-      for (final el in metadata.findElements('creator')) {
+      for (final el in metadata.findElements('creator', namespace: '*')) {
         author = el.innerText.trim();
         if (author.isNotEmpty) break;
       }
@@ -190,18 +189,30 @@ class EbookContentService {
       final href = manifest[idref];
       if (href == null) continue;
 
-      // Resolve relative to OPF directory
-      final fullPath = '$opfDir$href';
-      final entry = _findEntry(archive, fullPath);
+      // Resolve path: some EPUBs use paths relative to OPF dir,
+      // others use paths relative to EPUB root.
+      ArchiveFile? entry = _findEntry(archive, '$opfDir$href');
+      if (entry == null) {
+        // Try href as-is (root-relative path)
+        entry = _findEntry(archive, href);
+      }
       if (entry == null) continue;
 
-      // Read content as UTF-8
+      // Read content
+      final raw = entry.content;
+      if (raw == null) continue;
       String rawContent;
       try {
-        rawContent = utf8.decode(entry.content as List<int>);
+        rawContent = _decodeEntryText(raw);
       } catch (_) {
         // Binary file (image, etc.) — skip
         continue;
+      }
+
+      // Skip if not HTML (check for DOCTYPE or html tag or typical XML)
+      final trimmed = rawContent.trimLeft();
+      if (!trimmed.startsWith('<') && !trimmed.startsWith('<?xml')) {
+        // Not markup — try anyway as plain text
       }
 
       // Extract chapter title from HTML <title> or <h1>-<h6>
@@ -230,17 +241,51 @@ class EbookContentService {
     );
   }
 
+  /// Safely decode entry content (which may be List<int> or Uint8List) to text.
+  String _decodeEntryText(dynamic content) {
+    if (content is Uint8List) {
+      return utf8.decode(content);
+    } else if (content is List<int>) {
+      return utf8.decode(content);
+    } else if (content is String) {
+      return content;
+    }
+    throw FormatException('Cannot decode entry content of type ${content.runtimeType}');
+  }
+
   /// Find an entry in a ZIP archive by case-insensitive path.
+  /// Handles leading './', extra slashes, and cross-platform separators.
   ArchiveFile? _findEntry(Archive archive, String path) {
-    final normalizedPath = path.replaceAll('\\', '/');
+    // Normalize to forward slashes, strip leading './' or '/'
+    String normalizedPath = path.replaceAll('\\', '/').replaceAll('//', '/');
+    while (normalizedPath.startsWith('./') || normalizedPath.startsWith('/')) {
+      normalizedPath = normalizedPath.startsWith('./')
+          ? normalizedPath.substring(2)
+          : normalizedPath.substring(1);
+    }
+
+    // Exact match
     for (final entry in archive) {
       if (entry.name == normalizedPath) return entry;
     }
-    // Try case-insensitive match
+
+    // Case-insensitive match
     final lower = normalizedPath.toLowerCase();
     for (final entry in archive) {
       if (entry.name.toLowerCase() == lower) return entry;
     }
+
+    // Try stripping any directory prefix from the path and matching
+    // just the filename (some EPUBs flatten paths oddly)
+    final filename = normalizedPath.split('/').last;
+    for (final entry in archive) {
+      if (entry.name.endsWith('/$filename') ||
+          entry.name == filename ||
+          entry.name.toLowerCase().endsWith('/${filename.toLowerCase()}')) {
+        return entry;
+      }
+    }
+
     return null;
   }
 
@@ -258,43 +303,6 @@ class EbookContentService {
       return hMatch.group(1)!.trim();
     }
     return '';
-  }
-
-  EbookChapter _epubChapterToEbook(dynamic ch) {
-    String htmlContent = '';
-    String title = '';
-
-    // epubx returns EpubChapter with Title and HtmlContent
-    if (ch is EpubChapter) {
-      title = ch.Title ?? '';
-      htmlContent = ch.HtmlContent ?? '';
-    } else {
-      // Fallback for any other chapter type
-      final map = ch as Map<String, dynamic>;
-      title = map['title'] as String? ?? '';
-      htmlContent = map['htmlContent'] as String? ?? '';
-    }
-
-    final text = _stripHtml(htmlContent);
-    final estimatedPages = max(1, (text.length / kCharsPerPage).ceil());
-
-    return EbookChapter(
-      title: title,
-      content: text,
-      estimatedPages: estimatedPages,
-    );
-  }
-
-  List<EbookChapter> _flattenChapters(List<EbookChapter> chapters) {
-    final result = <EbookChapter>[];
-    for (final ch in chapters) {
-      result.add(ch);
-      // Sub-chapters are already part of the EpubChapter tree;
-      // they are extracted by _epubChapterToEbook which only
-      // handles the current level.  We rely on epubx's
-      // SubChapters being included in the list.
-    }
-    return result;
   }
 
   // ── PDF ─────────────────────────────────────────────────
