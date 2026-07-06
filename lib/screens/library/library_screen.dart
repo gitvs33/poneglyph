@@ -750,23 +750,55 @@ class _BookGridItem extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: _coverColor(book.title),
-                    borderRadius:
-                        BorderRadius.circular(DesignTokens.radiusMd),
-                  ),
-                  child: Center(
-                    child: Text(
-                      _coverInitials(book.title),
-                      style: TextStyle(
-                        fontSize: 40,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white.withAlpha(200),
+                if (book.format == BookFormat.pdf)
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius:
+                          BorderRadius.circular(DesignTokens.radiusMd),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFD44141), Color(0xFFB83230)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.picture_as_pdf,
+                              size: 32,
+                              color: Colors.white.withAlpha(160)),
+                          const SizedBox(height: 4),
+                          Text(
+                            _coverInitials(book.title),
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white.withAlpha(200),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _coverColor(book.title),
+                      borderRadius:
+                          BorderRadius.circular(DesignTokens.radiusMd),
+                    ),
+                    child: Center(
+                      child: Text(
+                        _coverInitials(book.title),
+                        style: TextStyle(
+                          fontSize: 40,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white.withAlpha(200),
+                        ),
                       ),
                     ),
                   ),
-                ),
                 // Progress badge in bottom-right
                 if (book.progress > 0)
                   Positioned(

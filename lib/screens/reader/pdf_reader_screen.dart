@@ -11,13 +11,15 @@ import '../../theme/theme_provider.dart';
 
 /// Full-page PDF renderer using Syncfusion PdfViewer.
 ///
-/// Provides proper page rendering (fonts, layout, images exactly as designed),
-/// built-in text selection, highlighting/annotation, bookmark/outline panel
-/// (TOC), and text search.
+/// Uses single-page horizontal layout — each page fills the screen and the user
+/// swipes left/right to turn pages, giving a book-like reading experience.
+///
+/// Pinch-to-zoom works natively (each page owns a TransformationController).
+/// Double-tap also zooms. Tapping the bars area (not the PDF itself) toggles
+/// the chrome overlay.
 ///
 /// Annotations (highlight, underline, strikethrough) are persisted to the PDF
-/// file itself via [PdfViewerController.saveDocument] when leaving the screen,
-/// so they survive app restarts.
+/// file via [PdfViewerController.saveDocument] when leaving the screen.
 class PdfReaderScreen extends StatefulWidget {
   final Book book;
 
@@ -76,21 +78,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   /// Persist annotations and reading progress when leaving the screen.
-  ///
-  /// Syncfusion's [PdfViewerController.saveDocument] re-serializes the PDF with
-  /// all annotations embedded as native PDF annotation objects, so they survive
-  /// app restarts without needing external JSON or a separate storage format.
   Future<void> _persistAnnotationsIfNeeded() async {
     if (!_annotationsChanged || _pdfController == null) return;
-
     try {
       final bytes = await _pdfController!.saveDocument();
       if (bytes.isNotEmpty && widget.book.filePath != null) {
         await File(widget.book.filePath!).writeAsBytes(bytes);
       }
-    } catch (_) {
-      // Silently fail — annotations are nice-to-have, not critical
-    }
+    } catch (_) {}
   }
 
   void _toggleBars() {
@@ -224,7 +219,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       backgroundColor: isDark ? const Color(0xFF0F0F17) : Colors.white,
       body: Stack(
         children: [
-          // ── PDF Viewer ─────────────────────────────────
+          // ── PDF Viewer (single-page horizontal) ────────
+          // Single-page mode with horizontal scroll gives a book-like feel.
+          // Each page gets its own TransformationController for pinch-to-zoom.
           if (widget.book.filePath != null)
             SfPdfViewer.file(
               key: _pdfViewerKey,
@@ -232,12 +229,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               controller: _pdfController,
               initialPageNumber: _currentPage + 1,
               enableTextSelection: true,
-              pageLayoutMode: PdfPageLayoutMode.continuous,
-              scrollDirection: PdfScrollDirection.vertical,
+              // ── Book-like page turning ─────────────────
+              pageLayoutMode: PdfPageLayoutMode.single,
+              scrollDirection: PdfScrollDirection.horizontal,
+              // ── UI chrome ──────────────────────────────
               canShowScrollHead: false,
               canShowScrollStatus: false,
               canShowPaginationDialog: false,
               canShowPageLoadingIndicator: true,
+              // ── Callbacks ──────────────────────────────
               onDocumentLoaded: (_) {
                 if (_pdfController != null) {
                   setState(() {
@@ -257,17 +257,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                   _currentPage = details.newPageNumber - 1;
                 });
               },
-              onTap: (_) => _toggleBars(),
-              // ── Annotation persistence callbacks ──
-              onAnnotationAdded: (_) {
-                _annotationsChanged = true;
-              },
-              onAnnotationRemoved: (_) {
-                _annotationsChanged = true;
-              },
-              onAnnotationEdited: (_) {
-                _annotationsChanged = true;
-              },
+              // ── Annotation persistence ─────────────────
+              onAnnotationAdded: (_) => _annotationsChanged = true,
+              onAnnotationRemoved: (_) => _annotationsChanged = true,
+              onAnnotationEdited: (_) => _annotationsChanged = true,
             )
           else
             const Center(child: Text('No file path')),
@@ -313,6 +306,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               ),
             ),
 
+          // ── Tap zone: tap edges to turn, tap center for bars ──
+          // We add a transparent gesture layer so the user can tap the screen
+          // edges to go prev/next page without depending on the bottom bar buttons.
+          if (_isReady && !_loadFailed)
+            _buildPageTapZones(),
+
           // ── Top Bar ────────────────────────────────────
           if (_showBars && _isReady)
             Positioned(
@@ -321,7 +320,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               right: 0,
               child: FadeTransition(
                 opacity: _barAnimation,
-                child: _buildTopBar(theme, isDark),
+                child: GestureDetector(
+                  onTap: () {}, // absorb taps so they don't pass through
+                  child: _buildTopBar(theme, isDark),
+                ),
               ),
             ),
 
@@ -333,11 +335,78 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               right: 0,
               child: FadeTransition(
                 opacity: _barAnimation,
-                child: _buildBottomBar(theme, isDark),
+                child: GestureDetector(
+                  onTap: () {},
+                  child: _buildBottomBar(theme, isDark),
+                ),
+              ),
+            ),
+
+          // ── Floating bar toggle button ─────────────────
+          if (_isReady && !_loadFailed)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 12,
+              child: GestureDetector(
+                onTap: _toggleBars,
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: (_showBars ? Colors.transparent : Colors.black26),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Icon(
+                    _showBars ? Icons.chevron_right : Icons.chevron_left,
+                    color: isDark ? Colors.white38 : Colors.black26,
+                    size: 20,
+                  ),
+                ),
               ),
             ),
         ],
       ),
+    );
+  }
+
+  /// Left/right third tap zones for page turning.
+  ///
+  /// Tapping the left third → previous page.
+  /// Tapping the right third → next page.
+  /// Tapping the middle third → toggle bars.
+  Widget _buildPageTapZones() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final zoneWidth = constraints.maxWidth / 3;
+        return Row(
+          children: [
+            // Left zone — previous page
+            GestureDetector(
+              onTap: () {
+                if (_currentPage > 0) {
+                  _pdfController?.jumpToPage(_currentPage);
+                }
+              },
+              child: Container(width: zoneWidth, color: Colors.transparent),
+            ),
+            // Middle zone — toggle bars
+            GestureDetector(
+              onTap: _toggleBars,
+              child: Container(
+                  width: zoneWidth, color: Colors.transparent),
+            ),
+            // Right zone — next page
+            GestureDetector(
+              onTap: () {
+                if (_currentPage < _totalPages - 1) {
+                  _pdfController?.jumpToPage(_currentPage + 2);
+                }
+              },
+              child: Container(width: zoneWidth, color: Colors.transparent),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -372,19 +441,16 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               Expanded(
                 child: Text(
                   widget.book.title,
-                  style: theme.textTheme.titleSmall
-                      ?.copyWith(color: fg),
+                  style: theme.textTheme.titleSmall?.copyWith(color: fg),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              // TOC (outline/bookmarks)
               IconButton(
                 icon: const Icon(Icons.list),
                 color: fg,
                 onPressed: () =>
                     _pdfViewerKey.currentState?.openBookmarkView(),
               ),
-              // More options
               IconButton(
                 icon: const Icon(Icons.more_horiz),
                 color: fg,
