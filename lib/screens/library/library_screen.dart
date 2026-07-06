@@ -569,14 +569,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         if (path.isEmpty) continue;
 
         final name = xf.name;
-        final ext = name.contains('.')
-            ? name.split('.').last.toLowerCase()
-            : 'epub';
-
-        BookFormat format = BookFormat.epub;
-        if (ext == 'pdf') format = BookFormat.pdf;
-        if (ext == 'mobi') format = BookFormat.mobi;
-
         final title = name.replaceAll(RegExp(r'\.[^.]+$'), '');
 
         // Copy file to local storage (content:// URIs from file_selector
@@ -585,6 +577,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
         final localPath = '${booksDir.path}/${DateTime.now().millisecondsSinceEpoch}_$name';
         final localFile = File(localPath);
         await localFile.writeAsBytes(bytes);
+
+        // Detect format by magic bytes — more reliable than extension.
+        // EPUB is a ZIP (PK\3\4), PDF starts with %PDF, MOBI uses PalmDB.
+        BookFormat format = BookFormat.epub;
+        if (bytes.length >= 4) {
+          if (bytes[0] == 0x25 && bytes[1] == 0x50 &&
+              bytes[2] == 0x44 && bytes[3] == 0x46) {
+            format = BookFormat.pdf;
+          } else if (bytes.length >= 8) {
+            // Check for MOBI/PRC/AZW (BOOKMOBI or TEXtREAd)
+            if ((bytes[0] == 0x42 && bytes[1] == 0x4F &&
+                 bytes[2] == 0x4F && bytes[3] == 0x4B &&
+                 bytes[4] == 0x4D && bytes[5] == 0x4F &&
+                 bytes[6] == 0x42 && bytes[7] == 0x49) ||
+                (bytes[0] == 0x54 && bytes[1] == 0x45 &&
+                 bytes[2] == 0x78 && bytes[3] == 0x74 &&
+                 bytes[4] == 0x52 && bytes[5] == 0x45 &&
+                 bytes[6] == 0x41 && bytes[7] == 0x64)) {
+              format = BookFormat.mobi;
+            }
+          }
+        }
 
         const int defaultPages = 300;
 

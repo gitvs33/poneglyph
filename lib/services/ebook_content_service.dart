@@ -46,17 +46,80 @@ const int kCharsPerPage = 1500;
 
 /// Service that reads ebook files and extracts plain-text content.
 class EbookContentService {
+  /// Detect the book format by reading the file header (magic bytes).
+  /// This is more reliable than trusting the file extension.
+  static Future<BookFormat> detectFormat(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return BookFormat.epub;
+      
+      final raf = await file.open(mode: FileMode.read);
+      try {
+        // Read first 8 bytes for signature detection
+        final header = await raf.read(8);
+        if (header.length < 4) return BookFormat.epub; // too small, default
+        
+        // PDF: %PDF
+        if (header[0] == 0x25 && header[1] == 0x50 && 
+            header[2] == 0x44 && header[3] == 0x46) {
+          return BookFormat.pdf;
+        }
+        
+        // ZIP (EPUB): PK\3\4
+        if (header[0] == 0x50 && header[1] == 0x4B && 
+            header[2] == 0x03 && header[3] == 0x04) {
+          return BookFormat.epub;
+        }
+        
+        // MOBI/PRC/AZW: BOOKMOBI or TEXtREAd
+        if (header.length >= 8) {
+          final text = utf8.decode(header.sublist(0, 8), allowMalformed: true);
+          if (text.startsWith('BOOKMOBI') || text.startsWith('TEXtREAd')) {
+            return BookFormat.mobi;
+          }
+        }
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {
+      // On error, fall through to default
+    }
+    
+    return BookFormat.epub;
+  }
+
   /// Read an ebook from [filePath] in the given [format].
   /// Returns null if the format is not supported or the file can't be parsed.
   Future<EbookContent?> readBook(String filePath, BookFormat format) async {
     final file = File(filePath);
     if (!await file.exists()) return null;
 
+    // Try the requested format first.
     switch (format) {
       case BookFormat.epub:
-        return _readEpub(file);
+        try {
+          return await _readEpub(file);
+        } catch (e) {
+          // EPUB parsing failed. If the file actually looks like a PDF,
+          // try that as a fallback.
+          final actualFormat = await detectFormat(filePath);
+          if (actualFormat == BookFormat.pdf) {
+            return _readPdf(file);
+          }
+          rethrow;
+        }
       case BookFormat.pdf:
-        return _readPdf(file);
+        try {
+          return await _readPdf(file);
+        } catch (e) {
+          // PDF parsing failed. If the file actually looks like an EPUB,
+          // try that as a fallback.
+          final actualFormat = await detectFormat(filePath);
+          if (actualFormat == BookFormat.epub) {
+            return _readEpub(file);
+          }
+          rethrow;
+        }
       case BookFormat.mobi:
         return _readMobi(file);
     }
