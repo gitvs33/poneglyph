@@ -27,9 +27,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<LibraryProvider>().initialize();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final library = context.read<LibraryProvider>();
+      await library.initialize();
+      // After the library loads, extract covers for existing EPUB books.
+      _seedMissingCovers();
     });
+  }
+
+  /// Extract and cache covers for existing EPUB books that don't have one.
+  void _seedMissingCovers() {
+    final library = context.read<LibraryProvider>();
+    for (final book in library.allBooks) {
+      if (book.format == BookFormat.epub &&
+          (book.coverUrl == null || book.coverUrl!.isEmpty) &&
+          book.filePath != null &&
+          book.filePath!.isNotEmpty &&
+          !book.filePath!.startsWith('http')) {
+        CoverCache.cacheCover(book.id, book.filePath!).then((coverUrl) {
+          if (coverUrl != null) {
+            library.updateBookCover(book.id, coverUrl);
+          }
+        });
+      }
+    }
   }
 
   @override
