@@ -77,7 +77,9 @@ class _ReaderScreenState extends State<ReaderScreen>
     } catch (e) {
       if (!mounted) return;
       _loadingError = true;
-      _loadingErrorMessage = e.toString();
+      final format = widget.book.format;
+      final path = widget.book.filePath ?? 'null';
+      _loadingErrorMessage = '${e.toString()}\n\nFormat: $format\nPath: $path';
       setState(() {});
     }
   }

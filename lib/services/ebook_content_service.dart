@@ -94,32 +94,19 @@ class EbookContentService {
     final file = File(filePath);
     if (!await file.exists()) return null;
 
-    // Try the requested format first.
+    // Check actual format by magic bytes BEFORE parsing.
+    // This handles books imported with wrong extension (e.g., .pdf file
+    // that is actually an EPUB, or vice versa).
+    final actualFormat = await detectFormat(filePath);
+    if (actualFormat != format) {
+      format = actualFormat;
+    }
+
     switch (format) {
       case BookFormat.epub:
-        try {
-          return await _readEpub(file);
-        } catch (e) {
-          // EPUB parsing failed. If the file actually looks like a PDF,
-          // try that as a fallback.
-          final actualFormat = await detectFormat(filePath);
-          if (actualFormat == BookFormat.pdf) {
-            return _readPdf(file);
-          }
-          rethrow;
-        }
+        return _readEpub(file);
       case BookFormat.pdf:
-        try {
-          return await _readPdf(file);
-        } catch (e) {
-          // PDF parsing failed. If the file actually looks like an EPUB,
-          // try that as a fallback.
-          final actualFormat = await detectFormat(filePath);
-          if (actualFormat == BookFormat.epub) {
-            return _readEpub(file);
-          }
-          rethrow;
-        }
+        return _readPdf(file);
       case BookFormat.mobi:
         return _readMobi(file);
     }
