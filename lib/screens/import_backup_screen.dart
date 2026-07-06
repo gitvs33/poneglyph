@@ -1,14 +1,193 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../theme/design_tokens.dart';
+import '../../providers/library_provider.dart';
+import '../../models/book.dart';
 
-/// Merged Import & Backup screen.
+/// Merged Import & Backup screen with REAL file importing.
 ///
-/// Combines the import-options list from [import_screen.dart] with
-/// the cloud-sync toggles previously in [profile_screen.dart]'s bottom sheet.
-///
-/// Design spec: frontend_changes.md §15
-class ImportBackupScreen extends StatelessWidget {
+/// "From Device" opens the native file picker for EPUB/PDF/MOBI files.
+/// "From URL" shows a dialog to paste a download link.
+/// Other sources show "Coming soon".
+class ImportBackupScreen extends StatefulWidget {
   const ImportBackupScreen({super.key});
+
+  @override
+  State<ImportBackupScreen> createState() => _ImportBackupScreenState();
+}
+
+class _ImportBackupScreenState extends State<ImportBackupScreen> {
+  bool _isImporting = false;
+
+  Future<void> _importFromDevice() async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['epub', 'pdf', 'mobi'],
+        allowMultiple: true,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      setState(() => _isImporting = true);
+      final library = context.read<LibraryProvider>();
+      int added = 0;
+
+      for (final file in result.files) {
+        if (file.path == null) continue;
+
+        final filePath = file.path!;
+        final fileName = file.name;
+        final ext = (file.extension ?? '').toLowerCase();
+
+        // Determine format from extension
+        BookFormat format;
+        switch (ext) {
+          case 'epub':
+            format = BookFormat.epub;
+            break;
+          case 'pdf':
+            format = BookFormat.pdf;
+            break;
+          case 'mobi':
+            format = BookFormat.mobi;
+            break;
+          default:
+            continue; // skip unknown
+        }
+
+        // Extract title from filename (strip extension)
+        final title = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
+
+        // Create a unique ID from path + timestamp
+        final id = 'book_${DateTime.now().millisecondsSinceEpoch}_$added';
+
+        final book = Book(
+          id: id,
+          title: title,
+          author: 'Unknown',
+          format: format,
+          source: BookSource.device,
+          filePath: filePath,
+          totalPages: 0,
+        );
+
+        await library.addBook(book);
+        added++;
+      }
+
+      setState(() => _isImporting = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              added == 1
+                  ? 'Imported 1 book'
+                  : 'Imported $added books',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _isImporting = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import failed: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _importFromUrl() async {
+    final controller = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import from URL'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/book.epub',
+            labelText: 'Book URL',
+          ),
+          keyboardType: TextInputType.url,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Import'),
+          ),
+        ],
+      ),
+    );
+
+    if (url == null || url.isEmpty) return;
+
+    // Extract filename from URL for the title
+    final uri = Uri.tryParse(url);
+    final pathSegments = uri?.pathSegments ?? [];
+    final fileName = pathSegments.isNotEmpty ? pathSegments.last : 'book';
+    final title = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
+
+    // Guess format from extension
+    final ext = fileName.contains('.')
+        ? fileName.split('.').last.toLowerCase()
+        : 'epub';
+    BookFormat format;
+    switch (ext) {
+      case 'pdf':
+        format = BookFormat.pdf;
+        break;
+      case 'mobi':
+        format = BookFormat.mobi;
+        break;
+      default:
+        format = BookFormat.epub;
+    }
+
+    final id = 'book_url_${DateTime.now().millisecondsSinceEpoch}';
+    final book = Book(
+      id: id,
+      title: title,
+      author: 'Unknown',
+      format: format,
+      source: BookSource.url,
+      filePath: url,
+      description: 'Imported from URL: $url',
+      totalPages: 0,
+    );
+
+    await context.read<LibraryProvider>().addBook(book);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added "$title" to library'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _comingSoon(String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$feature — coming in next update'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -18,7 +197,7 @@ class ImportBackupScreen extends StatelessWidget {
       _ImportOptionData(
         icon: Icons.phone_android,
         title: 'From Device',
-        subtitle: 'Browse files on your device',
+        subtitle: 'Browse EPUB, PDF, MOBI files',
         color: Color(0xFF6C63FF),
       ),
       _ImportOptionData(
@@ -106,44 +285,68 @@ class ImportBackupScreen extends StatelessWidget {
 
             // ── Scrollable body ──────────────────────────────
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.only(bottom: DesignTokens.grid16),
+              child: Stack(
                 children: [
-                  //  ··· Import Books section ···
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      DesignTokens.grid24,
-                      DesignTokens.grid20,
-                      DesignTokens.grid24,
-                      DesignTokens.grid8,
-                    ),
-                    child: Text(
-                      'Import Books',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
+                  ListView(
+                    padding: const EdgeInsets.only(bottom: DesignTokens.grid16),
+                    children: [
+                      //  ··· Import Books section ···
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          DesignTokens.grid24,
+                          DesignTokens.grid20,
+                          DesignTokens.grid24,
+                          DesignTokens.grid8,
+                        ),
+                        child: Text(
+                          'Import Books',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      ...importOptions.map(
+                        (opt) => _buildImportTile(
+                          context,
+                          opt,
+                          _isImporting,
+                          _importFromDevice,
+                          _importFromUrl,
+                          _comingSoon,
+                        ),
+                      ),
+
+                      const SizedBox(height: DesignTokens.grid16),
+
+                      //  ··· Backup & Sync section ···
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          DesignTokens.grid24,
+                          DesignTokens.grid8,
+                          DesignTokens.grid24,
+                          DesignTokens.grid8,
+                        ),
+                        child: Text(
+                          'Backup & Sync',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      ...backupOptions.map(
+                        (opt) => _buildBackupTile(context, opt),
+                      ),
+                    ],
+                  ),
+
+                  // Loading overlay
+                  if (_isImporting)
+                    Container(
+                      color: Colors.black26,
+                      child: const Center(
+                        child: CircularProgressIndicator(),
                       ),
                     ),
-                  ),
-                  ...importOptions.map(_buildImportTile),
-
-                  const SizedBox(height: DesignTokens.grid16),
-
-                  //  ··· Backup & Sync section ···
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      DesignTokens.grid24,
-                      DesignTokens.grid8,
-                      DesignTokens.grid24,
-                      DesignTokens.grid8,
-                    ),
-                    child: Text(
-                      'Backup & Sync',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  ...backupOptions.map(_buildBackupTile),
                 ],
               ),
             ),
@@ -160,7 +363,7 @@ class ImportBackupScreen extends StatelessWidget {
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: () {},
+                  onPressed: _isImporting ? null : () => _comingSoon('Sync'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.colorScheme.primary,
                     foregroundColor: theme.colorScheme.onPrimary,
@@ -178,7 +381,26 @@ class ImportBackupScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildImportTile(_ImportOptionData opt) {
+  Widget _buildImportTile(
+    BuildContext context,
+    _ImportOptionData opt,
+    bool isImporting,
+    VoidCallback importFromDevice,
+    VoidCallback importFromUrl,
+    void Function(String) comingSoon,
+  ) {
+    VoidCallback? onTap;
+    switch (opt.title) {
+      case 'From Device':
+        onTap = isImporting ? null : importFromDevice;
+        break;
+      case 'From URL':
+        onTap = isImporting ? null : importFromUrl;
+        break;
+      default:
+        onTap = () => comingSoon(opt.title);
+    }
+
     return ListTile(
       leading: Container(
         width: 44,
@@ -191,9 +413,7 @@ class ImportBackupScreen extends StatelessWidget {
       ),
       title: Text(
         opt.title,
-        style: TextStyle(
-          fontWeight: FontWeight.w600,
-        ),
+        style: const TextStyle(fontWeight: FontWeight.w600),
       ),
       subtitle: Text(
         opt.subtitle,
@@ -203,11 +423,11 @@ class ImportBackupScreen extends StatelessWidget {
         ),
       ),
       trailing: const Icon(Icons.chevron_right),
-      onTap: () {},
+      onTap: onTap,
     );
   }
 
-  Widget _buildBackupTile(_BackupOptionData opt) {
+  Widget _buildBackupTile(BuildContext context, _BackupOptionData opt) {
     return ListTile(
       leading: Container(
         width: 44,
@@ -220,9 +440,7 @@ class ImportBackupScreen extends StatelessWidget {
       ),
       title: Text(
         opt.title,
-        style: TextStyle(
-          fontWeight: FontWeight.w600,
-        ),
+        style: const TextStyle(fontWeight: FontWeight.w600),
       ),
       subtitle: Text(
         opt.subtitle,
@@ -234,9 +452,9 @@ class ImportBackupScreen extends StatelessWidget {
       trailing: Switch(
         value: false,
         activeColor: const Color(0xFF34C759),
-        onChanged: (_) {},
+        onChanged: (_) => _comingSoon(opt.title),
       ),
-      onTap: () {},
+      onTap: () => _comingSoon(opt.title),
     );
   }
 }
