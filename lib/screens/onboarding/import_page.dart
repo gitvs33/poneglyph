@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../models/book.dart';
@@ -32,6 +35,14 @@ class _ImportPageState extends State<ImportPage> {
       setState(() => _isImporting = true);
 
       final library = context.read<LibraryProvider>();
+
+      // Get app documents directory for local file storage
+      final docsDir = await getApplicationDocumentsDirectory();
+      final booksDir = Directory('${docsDir.path}/books');
+      if (!await booksDir.exists()) {
+        await booksDir.create(recursive: true);
+      }
+
       int added = 0;
 
       for (final xf in xFiles) {
@@ -49,14 +60,21 @@ class _ImportPageState extends State<ImportPage> {
 
         final title = name.replaceAll(RegExp(r'\.[^.]+$'), '');
 
+        // Copy file to local storage (content:// URIs from file_selector
+        // cannot be read via File() later — only via XFile.readAsBytes()).
+        final bytes = await xf.readAsBytes();
+        final localPath = '${booksDir.path}/${DateTime.now().millisecondsSinceEpoch}_$name';
+        final localFile = File(localPath);
+        await localFile.writeAsBytes(bytes);
+
         await library.addBook(Book(
           id: 'onboard_${DateTime.now().millisecondsSinceEpoch}_$added',
           title: title,
           author: 'Unknown',
           format: format,
           source: BookSource.device,
-          filePath: path,
-          totalPages: 0,
+          filePath: localPath,
+          totalPages: 300,
         ));
         added++;
       }

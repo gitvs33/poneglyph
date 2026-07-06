@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/collections_provider.dart';
@@ -551,6 +554,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
       if (!mounted) return;
       final library = context.read<LibraryProvider>();
+
+      // Get app documents directory for local file storage
+      final docsDir = await getApplicationDocumentsDirectory();
+      final booksDir = Directory('${docsDir.path}/books');
+      if (!await booksDir.exists()) {
+        await booksDir.create(recursive: true);
+      }
+
       int added = 0;
 
       for (final xf in xFiles) {
@@ -568,8 +579,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
         final title = name.replaceAll(RegExp(r'\.[^.]+$'), '');
 
-        // Default to 300 pages (typical book length) since we can't parse
-        // the actual file yet. Real EPUB/PDF parsing later.
+        // Copy file to local storage (content:// URIs from file_selector
+        // cannot be read via File() — only via XFile.readAsBytes()).
+        final bytes = await xf.readAsBytes();
+        final localPath = '${booksDir.path}/${DateTime.now().millisecondsSinceEpoch}_$name';
+        final localFile = File(localPath);
+        await localFile.writeAsBytes(bytes);
+
         const int defaultPages = 300;
 
         await library.addBook(Book(
@@ -578,11 +594,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
           author: 'Unknown',
           format: format,
           source: BookSource.device,
-          filePath: path,
+          filePath: localPath,
           totalPages: defaultPages,
         ));
         added++;
       }
+
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

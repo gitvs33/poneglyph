@@ -18,7 +18,7 @@ dependencies:
   archive: ^3.6.1
   xml: ^6.6.1
   pdf: ^3.8.4
-  pdf_text_extraction: ^2.1.1
+  path_provider: ^2.1.6
 dev_dependencies:
   flutter_test:
     sdk: flutter
