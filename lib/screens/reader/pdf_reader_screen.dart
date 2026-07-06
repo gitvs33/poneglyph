@@ -306,12 +306,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               ),
             ),
 
-          // ── Tap zone: tap edges to turn, tap center for bars ──
-          // We add a transparent gesture layer so the user can tap the screen
-          // edges to go prev/next page without depending on the bottom bar buttons.
-          if (_isReady && !_loadFailed)
-            _buildPageTapZones(),
-
           // ── Top Bar ────────────────────────────────────
           if (_showBars && _isReady)
             Positioned(
@@ -366,53 +360,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             ),
         ],
       ),
-    );
-  }
-
-  /// Left/right third tap zones for page turning.
-  ///
-  /// Tapping the left third → previous page.
-  /// Tapping the right third → next page.
-  /// Tapping the middle third → toggle bars.
-  Widget _buildPageTapZones() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final zoneWidth = constraints.maxWidth / 3;
-        return Row(
-          children: [
-            // Left zone — previous page
-          // NOTE: HitTestBehavior.translucent lets taps pass through to
-          // SfPdfViewer so long-press (text selection) and swipe-to-turn
-          // still reach the PDF viewer underneath.
-            GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () {
-                if (_currentPage > 0) {
-                  _pdfController?.jumpToPage(_currentPage);
-                }
-              },
-              child: Container(width: zoneWidth, color: Colors.transparent),
-            ),
-            // Middle zone — toggle bars
-            GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: _toggleBars,
-              child: Container(
-                  width: zoneWidth, color: Colors.transparent),
-            ),
-            // Right zone — next page
-            GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () {
-                if (_currentPage < _totalPages - 1) {
-                  _pdfController?.jumpToPage(_currentPage + 2);
-                }
-              },
-              child: Container(width: zoneWidth, color: Colors.transparent),
-            ),
-          ],
-        );
-      },
     );
   }
 
