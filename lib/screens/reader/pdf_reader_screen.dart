@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -11,15 +12,18 @@ import '../../theme/theme_provider.dart';
 
 /// Full-page PDF renderer using Syncfusion PdfViewer.
 ///
-/// Uses single-page horizontal layout — each page fills the screen and the user
-/// swipes left/right to turn pages, giving a book-like reading experience.
+/// Uses continuous vertical layout — pages stack in a scrollable column.
+/// The top/bottom bar overlays provide page navigation and chrome control.
+/// Tapping the PDF content toggles the bars. Pinch-to-zoom works natively.
 ///
-/// Pinch-to-zoom works natively (each page owns a TransformationController).
-/// Double-tap also zooms. Tapping the bars area (not the PDF itself) toggles
-/// the chrome overlay.
+/// Annotations (highlight, underline, strikethrough) are **eagerly persisted**
+/// to the PDF file itself via [PdfViewerController.saveDocument] as soon as
+/// they are added/removed/edited (debounced 500 ms). This means annotations
+/// survive app restarts and are visible in other PDF readers when the file
+/// is shared.
 ///
-/// Annotations (highlight, underline, strikethrough) are persisted to the PDF
-/// file via [PdfViewerController.saveDocument] when leaving the screen.
+/// Text selection via long-press is enabled. The built-in context menu
+/// provides Copy, Highlight, Underline, Strikethrough, and Squiggly.
 class PdfReaderScreen extends StatefulWidget {
   final Book book;
 
@@ -46,6 +50,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   // Track annotation changes so we only save when needed
   bool _annotationsChanged = false;
+  Timer? _saveDebounceTimer;
 
   @override
   void initState() {
@@ -71,21 +76,43 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   @override
   void dispose() {
     _currentSession = _currentSession?.end();
-    _persistAnnotationsIfNeeded();
+    _saveDebounceTimer?.cancel();
+    // Fire-and-forget final save attempt. The eager saves above should have
+    // already persisted the bytes while the controller was alive, so this is
+    // just a belt-and-suspenders call.
+    _persistAnnotations();
     _barController.dispose();
     _pdfController?.dispose();
     super.dispose();
   }
 
-  /// Persist annotations and reading progress when leaving the screen.
-  Future<void> _persistAnnotationsIfNeeded() async {
+  /// Eagerly save annotations to the PDF file as soon as they change.
+  ///
+  /// Debounced to avoid hammering the filesystem when the user strokes across
+  /// several highlights rapidly.  Saves while [SfPdfViewer] is still alive so
+  /// [saveDocument] has a valid internal document state.
+  void _scheduleAnnotationSave() {
+    _annotationsChanged = true;
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+      _persistAnnotations();
+    });
+  }
+
+  /// Persist annotations to the PDF file.
+  Future<void> _persistAnnotations() async {
     if (!_annotationsChanged || _pdfController == null) return;
+    final controller = _pdfController!;
     try {
-      final bytes = await _pdfController!.saveDocument();
+      final bytes = await controller.saveDocument();
       if (bytes.isNotEmpty && widget.book.filePath != null) {
         await File(widget.book.filePath!).writeAsBytes(bytes);
+        debugPrint('[PdfReader] Annotations saved (${bytes.length} bytes)');
       }
-    } catch (_) {}
+    } catch (e) {
+      // Log but don't crash the reader
+      debugPrint('[PdfReader] Failed to save annotations: $e');
+    }
   }
 
   void _toggleBars() {
@@ -260,9 +287,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 });
               },
               // ── Annotation persistence ─────────────────
-              onAnnotationAdded: (_) => _annotationsChanged = true,
-              onAnnotationRemoved: (_) => _annotationsChanged = true,
-              onAnnotationEdited: (_) => _annotationsChanged = true,
+              // Eagerly save on every annotation change while viewer is alive
+              onAnnotationAdded: (_) => _scheduleAnnotationSave(),
+              onAnnotationRemoved: (_) => _scheduleAnnotationSave(),
+              onAnnotationEdited: (_) => _scheduleAnnotationSave(),
             )
           else
             const Center(child: Text('No file path')),
