@@ -62,9 +62,17 @@ class _ReaderScreenState extends State<ReaderScreen>
       }
 
       final content = await _contentService.readBook(path, format);
-      if (content == null || !mounted) return;
+      if (!mounted) return;
+
+      if (content == null) {
+        _loadingError = true;
+        _loadingErrorMessage = 'File not found at: $path';
+        setState(() {});
+        return;
+      }
 
       _reader.loadContent(content);
+      setState(() {});
       setState(() {});
     } catch (e) {
       if (!mounted) return;

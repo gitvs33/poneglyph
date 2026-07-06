@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'dart:typed_data';
+import 'package:archive/archive.dart';
 import 'package:epubx/epubx.dart';
 import 'package:xml/xml.dart';
 
@@ -64,8 +65,10 @@ class EbookContentService {
   // ── EPUB ────────────────────────────────────────────────
 
   Future<EbookContent> _readEpub(File file) async {
+    final bytes = await file.readAsBytes();
+
+    // Try epubx first (handles most well-formed EPUBs).
     try {
-      final bytes = await file.readAsBytes();
       final book = await EpubReader.readBook(bytes);
 
       final chapters = <EbookChapter>[];
@@ -74,7 +77,6 @@ class EbookContentService {
           chapters.add(_epubChapterToEbook(ch));
         }
       }
-      // Flatten nested sub-chapters
       final flat = _flattenChapters(chapters);
 
       final coverBytes =
@@ -86,10 +88,176 @@ class EbookContentService {
         chapters: flat,
         coverImageBytes: coverBytes,
       );
-    } catch (e) {
-      // Fallback: try reading as raw text
-      return _fallbackTextContent(file, 'EPUB');
+    } catch (_) {
+      // epubx failed — fall back to manual parsing.
+      // Some EPUBs use non-standard structures that confuse epubx.
     }
+
+    // Manual EPUB parsing via archive package.
+    return _readEpubManual(bytes, file);
+  }
+
+  /// Parse an EPUB using the [archive] package directly.
+  /// This handles EPUBs that epubx chokes on.
+  Future<EbookContent> _readEpubManual(Uint8List bytes, File file) async {
+    late Archive archive;
+    try {
+      archive = ZipDecoder().decodeBytes(bytes);
+    } catch (e) {
+      throw Exception('Failed to unzip EPUB: $e');
+    }
+
+    // 1. Find META-INF/container.xml
+    final containerFile = _findEntry(archive, 'META-INF/container.xml');
+    if (containerFile == null) {
+      throw Exception('Invalid EPUB: missing META-INF/container.xml');
+    }
+
+    // 2. Parse container.xml to get rootfile (OPF) path
+    final containerXml = utf8.decode(containerFile.content as List<int>);
+    String opfPath;
+    try {
+      final doc = XmlDocument.parse(containerXml);
+      final rootfile = doc.findAllElements('rootfile').first;
+      opfPath = rootfile.getAttribute('full-path') ?? '';
+    } catch (e) {
+      throw Exception('Invalid EPUB: cannot parse container.xml ($e)');
+    }
+    if (opfPath.isEmpty) {
+      throw Exception('Invalid EPUB: rootfile path empty in container.xml');
+    }
+
+    // 2b. Resolve base directory of the OPF (for relative paths)
+    final opfDir = opfPath.contains('/')
+        ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1)
+        : '';
+
+    // 3. Parse OPF for manifest and spine
+    final opfEntry = _findEntry(archive, opfPath);
+    if (opfEntry == null) {
+      throw Exception('Invalid EPUB: OPF file not found: $opfPath');
+    }
+
+    final opfXml = utf8.decode(opfEntry.content as List<int>);
+    late XmlDocument opfDoc;
+    try {
+      opfDoc = XmlDocument.parse(opfXml);
+    } catch (e) {
+      throw Exception('Invalid EPUB: cannot parse OPF ($e)');
+    }
+
+    // Parse manifest: id → href, media-type
+    final manifest = <String, String>{};
+    for (final item in opfDoc.findAllElements('item')) {
+      final id = item.getAttribute('id');
+      final href = item.getAttribute('href');
+      if (id != null && href != null) {
+        manifest[id] = href;
+      }
+    }
+
+    // Parse spine: ordered list of idrefs
+    final spineRefs = <String>[];
+    for (final itemref in opfDoc.findAllElements('itemref')) {
+      final idref = itemref.getAttribute('idref');
+      if (idref != null) {
+        spineRefs.add(idref);
+      }
+    }
+
+    // Parse metadata for title and author
+    String title = '';
+    String author = '';
+    final metadata = opfDoc.findAllElements('metadata').firstOrNull;
+    if (metadata != null) {
+      final titleEl = metadata.findElements('title').firstOrNull;
+      if (titleEl != null) title = titleEl.innerText.trim();
+
+      // dc:creator with namespace
+      for (final el in metadata.findElements('creator')) {
+        author = el.innerText.trim();
+        if (author.isNotEmpty) break;
+      }
+    }
+    if (title.isEmpty) {
+      title = file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
+    }
+
+    // 4. Read spine-ordered HTML files, strip HTML, produce chapters
+    final chapters = <EbookChapter>[];
+    for (int i = 0; i < spineRefs.length; i++) {
+      final idref = spineRefs[i];
+      final href = manifest[idref];
+      if (href == null) continue;
+
+      // Resolve relative to OPF directory
+      final fullPath = '$opfDir$href';
+      final entry = _findEntry(archive, fullPath);
+      if (entry == null) continue;
+
+      // Read content as UTF-8
+      String rawContent;
+      try {
+        rawContent = utf8.decode(entry.content as List<int>);
+      } catch (_) {
+        // Binary file (image, etc.) — skip
+        continue;
+      }
+
+      // Extract chapter title from HTML <title> or <h1>-<h6>
+      String chapterTitle = _extractHtmlTitle(rawContent);
+      if (chapterTitle.isEmpty) {
+        chapterTitle = href.replaceAll(RegExp(r'\.[^.]+$'), '');
+      }
+
+      final text = _stripHtml(rawContent);
+      if (text.trim().isEmpty) continue;
+
+      final estimatedPages = max(1, (text.length / kCharsPerPage).ceil());
+      chapters.add(EbookChapter(
+        title: chapterTitle,
+        content: text,
+        estimatedPages: estimatedPages,
+      ));
+    }
+
+    return EbookContent(
+      title: title,
+      author: author.isNotEmpty ? author : 'Unknown',
+      chapters: chapters.isNotEmpty
+          ? chapters
+          : [EbookChapter(title: title, content: 'No readable content found', estimatedPages: 1)],
+    );
+  }
+
+  /// Find an entry in a ZIP archive by case-insensitive path.
+  ArchiveFile? _findEntry(Archive archive, String path) {
+    final normalizedPath = path.replaceAll('\\', '/');
+    for (final entry in archive) {
+      if (entry.name == normalizedPath) return entry;
+    }
+    // Try case-insensitive match
+    final lower = normalizedPath.toLowerCase();
+    for (final entry in archive) {
+      if (entry.name.toLowerCase() == lower) return entry;
+    }
+    return null;
+  }
+
+  /// Extract the first meaningful title from HTML content.
+  String _extractHtmlTitle(String html) {
+    // Try <title> tag first
+    final titleMatch = RegExp(r'<title[^>]*>([^<]+)</title>', caseSensitive: false).firstMatch(html);
+    if (titleMatch != null) {
+      final t = titleMatch.group(1)!.trim();
+      if (t.isNotEmpty) return t;
+    }
+    // Try first <h1>-<h6>
+    final hMatch = RegExp(r'<h[1-6][^>]*>([^<]+)</h[1-6]>', caseSensitive: false).firstMatch(html);
+    if (hMatch != null) {
+      return hMatch.group(1)!.trim();
+    }
+    return '';
   }
 
   EbookChapter _epubChapterToEbook(dynamic ch) {
@@ -132,15 +300,14 @@ class EbookContentService {
   // ── PDF ─────────────────────────────────────────────────
 
   Future<EbookContent> _readPdf(File file) async {
+    final bytes = await file.readAsBytes();
     try {
-      final bytes = await file.readAsBytes();
       final text = await _extractPdfText(bytes);
 
       if (text.trim().isEmpty) {
-        throw Exception('No text content found in PDF');
+        throw FormatException('No text content found in PDF');
       }
 
-      // Split into chapters heuristically by "Chapter", "Part", etc.
       final title =
           file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
       final chapters = _splitIntoChapters(title, text);
@@ -151,7 +318,7 @@ class EbookContentService {
         chapters: chapters,
       );
     } catch (e) {
-      return _fallbackTextContent(file, 'PDF');
+      throw Exception('Failed to extract text from PDF: $e');
     }
   }
 
@@ -267,22 +434,18 @@ class EbookContentService {
   }
 
   /// Fallback: read file as raw UTF-8 text (handles plain .txt files
-  /// or files mislabeled as EPUB/PDF/MOBI).
+  /// that were given an ebook extension).
   Future<EbookContent> _fallbackTextContent(File file, String label) async {
-    try {
-      final text = await file.readAsString();
-      final title =
-          file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
-      final pages = max(1, (text.length / kCharsPerPage).ceil());
-      return EbookContent(
-        title: title,
-        author: 'Unknown',
-        chapters: [
-          EbookChapter(title: title, content: text, estimatedPages: pages),
-        ],
-      );
-    } catch (_) {
-      rethrow;
-    }
+    final text = await file.readAsString();
+    final title =
+        file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final pages = max(1, (text.length / kCharsPerPage).ceil());
+    return EbookContent(
+      title: title,
+      author: 'Unknown',
+      chapters: [
+        EbookChapter(title: title, content: text, estimatedPages: pages),
+      ],
+    );
   }
 }
