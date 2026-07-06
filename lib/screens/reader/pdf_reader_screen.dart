@@ -381,7 +381,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         return Row(
           children: [
             // Left zone — previous page
+          // NOTE: HitTestBehavior.translucent lets taps pass through to
+          // SfPdfViewer so long-press (text selection) and swipe-to-turn
+          // still reach the PDF viewer underneath.
             GestureDetector(
+              behavior: HitTestBehavior.translucent,
               onTap: () {
                 if (_currentPage > 0) {
                   _pdfController?.jumpToPage(_currentPage);
@@ -391,12 +395,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             ),
             // Middle zone — toggle bars
             GestureDetector(
+              behavior: HitTestBehavior.translucent,
               onTap: _toggleBars,
               child: Container(
                   width: zoneWidth, color: Colors.transparent),
             ),
             // Right zone — next page
             GestureDetector(
+              behavior: HitTestBehavior.translucent,
               onTap: () {
                 if (_currentPage < _totalPages - 1) {
                   _pdfController?.jumpToPage(_currentPage + 2);

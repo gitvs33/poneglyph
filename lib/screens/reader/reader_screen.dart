@@ -116,8 +116,11 @@ class _ReaderScreenState extends State<ReaderScreen>
             body: Stack(
               children: [
                 // Reading content area (tap to toggle bars)
+                // NOTE: HitTestBehavior.translucent lets long-press through
+                // to SelectableText so text selection & context menu still work.
                 Positioned.fill(
                   child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
                     onTap: () {
                       reader.toggleBars();
                       if (reader.showBars) {
