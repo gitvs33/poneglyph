@@ -4,18 +4,17 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'pdf_thumbnail_service.dart';
+
 /// Lightweight cache for book cover images.
 ///
-/// Extracts cover images from EPUB files (ZIP) and caches them as JPEG files
-/// in `{appDocsDir}/covers/`.  The cache path is stored in [Book.coverUrl].
-///
-/// **PDF cover extraction is not yet implemented** — the Syncfusion PDF library
-/// available in this project does not expose a page-to-image render API, so PDF
-/// books show a generic gradient card in the library grid.
+/// Extracts cover images from EPUB files (ZIP archive scanning + OPF parsing)
+/// and renders the first page of PDF files via the native platform PDF renderer.
+/// Cached images are stored as JPEG/PNG files in `{appDocsDir}/covers/`.
 class CoverCache {
-  /// Extract the cover image from an EPUB file and cache it.
+  /// Extract a cover image from a book file and cache it.
   ///
-  /// Returns the path to the cached JPEG file, or `null` if no cover could
+  /// Returns the path to the cached image file, or `null` if no cover could
   /// be extracted.
   static Future<String?> cacheCover(String bookId, String filePath) async {
     try {
@@ -27,12 +26,22 @@ class CoverCache {
 
       Uint8List? coverBytes;
 
-      // EPUB files are ZIP archives — look for common cover filenames.
-      try {
-        final archive = ZipDecoder().decodeBytes(bytes);
-        coverBytes = _extractEpubCover(archive);
-      } catch (_) {
-        // Not a valid ZIP — nothing we can do.
+      // Detect file format by magic bytes.
+      if (_isPdf(bytes)) {
+        coverBytes = await PdfThumbnailService.getThumbnail(
+          filePath: filePath,
+          page: 0,
+          maxWidth: 300,
+          maxHeight: 400,
+        );
+      } else {
+        // Assume EPUB (ZIP archive).
+        try {
+          final archive = ZipDecoder().decodeBytes(bytes);
+          coverBytes = _extractEpubCover(archive);
+        } catch (_) {
+          // Not a valid ZIP — nothing we can do.
+        }
       }
 
       if (coverBytes == null || coverBytes.isEmpty) return null;
@@ -44,7 +53,8 @@ class CoverCache {
         await coversDir.create(recursive: true);
       }
 
-      final cachePath = '${coversDir.path}/${bookId}_cover.jpg';
+      final isPng = _isPng(coverBytes);
+      final cachePath = '${coversDir.path}/${bookId}_cover.${isPng ? 'png' : 'jpg'}';
       await File(cachePath).writeAsBytes(coverBytes);
       return cachePath;
     } catch (_) {
@@ -63,6 +73,37 @@ class CoverCache {
     } catch (_) {
       // Best-effort.
     }
+  }
+
+  /// Check if a cached cover image exists and is valid.
+  static Future<bool> hasValidCover(String? coverUrl) async {
+    if (coverUrl == null || coverUrl.isEmpty) return false;
+    try {
+      final file = File(coverUrl);
+      return await file.exists() && await file.length() > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ── Format detection ──────────────────────────────────────
+
+  static bool _isPdf(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    // PDF files start with "%PDF"
+    return bytes[0] == 0x25 && bytes[1] == 0x50 && bytes[2] == 0x44 && bytes[3] == 0x46;
+  }
+
+  static bool _isPng(Uint8List bytes) {
+    if (bytes.length < 8) return false;
+    return bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4e &&
+        bytes[3] == 0x47 &&
+        bytes[4] == 0x0d &&
+        bytes[5] == 0x0a &&
+        bytes[6] == 0x1a &&
+        bytes[7] == 0x0a;
   }
 
   // ── EPUB helpers ──────────────────────────────────────────
@@ -192,16 +233,5 @@ class CoverCache {
     }
 
     return null;
-  }
-
-  /// Check if a cached cover image exists and is valid.
-  static Future<bool> hasValidCover(String? coverUrl) async {
-    if (coverUrl == null || coverUrl.isEmpty) return false;
-    try {
-      final file = File(coverUrl);
-      return await file.exists() && await file.length() > 0;
-    } catch (_) {
-      return false;
-    }
   }
 }
