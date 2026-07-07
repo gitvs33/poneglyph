@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../theme/design_tokens.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/collections_provider.dart';
@@ -12,6 +13,7 @@ import '../reader/pdf_reader_screen.dart';
 import '../reader/reader_screen.dart';
 import '../filter_and_sort_screen.dart';
 import '../../services/cover_cache.dart';
+import '../../widgets/sheets/collection_picker.dart';
 enum _LibraryTab { all, books, collections, authors }
 
 class LibraryScreen extends StatefulWidget {
@@ -39,7 +41,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   void _seedMissingCovers() {
     final library = context.read<LibraryProvider>();
     for (final book in library.allBooks) {
-      if (book.format == BookFormat.epub &&
+      if ((book.format == BookFormat.epub || book.format == BookFormat.pdf) &&
           (book.coverUrl == null || book.coverUrl!.isEmpty) &&
           book.filePath != null &&
           book.filePath!.isNotEmpty &&
@@ -461,9 +463,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.playlist_add),
+              title: Text('Add to Collection',
+                  style: theme.textTheme.bodyMedium),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showCollectionPicker(context, book);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.share),
               title: Text('Share', style: theme.textTheme.bodyMedium),
-              onTap: () => Navigator.pop(ctx),
+              onTap: () {
+                Navigator.pop(ctx);
+                _shareBook(book);
+              },
             ),
             ListTile(
               leading: Icon(Icons.delete_outline, color: Colors.red[400]),
@@ -479,6 +493,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ),
     );
+  }
+
+  void _showCollectionPicker(BuildContext context, Book book) {
+    final collections = context.read<CollectionsProvider>();
+    CollectionPickerSheet.show(context,
+        collections: collections.collections,
+        bookId: book.id,
+        onPicked: (collectionId) {
+      collections.addBookToCollection(collectionId, book.id);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Added "${book.title}" to collection'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    });
+  }
+
+  void _shareBook(Book book) {
+    final path = book.filePath;
+    if (path != null && path.isNotEmpty) {
+      final file = XFile(path);
+      Share.shareXFiles([file], text: book.title);
+    }
   }
 
   void _confirmDelete(
@@ -642,8 +682,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ));
         added++;
 
-        // Asynchronously extract and cache cover image for EPUB books.
-        if (format == BookFormat.epub) {
+        // Asynchronously extract and cache cover image for EPUB/PDF books.
+        if (format == BookFormat.epub || format == BookFormat.pdf) {
           final book =
               library.allBooks.lastWhere((b) => b.filePath == localPath);
           _cacheCoverAsync(book.id, localPath, library);

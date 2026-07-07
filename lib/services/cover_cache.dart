@@ -9,8 +9,9 @@ import 'package:path_provider/path_provider.dart';
 /// Extracts cover images from EPUB files (ZIP) and caches them as JPEG files
 /// in `{appDocsDir}/covers/`.  The cache path is stored in [Book.coverUrl].
 ///
-/// For PDF books the library screen shows a generic PDF card — no cover
-/// extraction is attempted (would require rendering the first page).
+/// **PDF cover extraction is not yet implemented** — the Syncfusion PDF library
+/// available in this project does not expose a page-to-image render API, so PDF
+/// books show a generic gradient card in the library grid.
 class CoverCache {
   /// Extract the cover image from an EPUB file and cache it.
   ///
@@ -22,6 +23,8 @@ class CoverCache {
       if (!await file.exists()) return null;
 
       final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return null;
+
       Uint8List? coverBytes;
 
       // EPUB files are ZIP archives — look for common cover filenames.
@@ -29,12 +32,12 @@ class CoverCache {
         final archive = ZipDecoder().decodeBytes(bytes);
         coverBytes = _extractEpubCover(archive);
       } catch (_) {
-        // Not a valid ZIP, or something went wrong — that's fine.
+        // Not a valid ZIP — nothing we can do.
       }
 
       if (coverBytes == null || coverBytes.isEmpty) return null;
 
-      // Save to covers directory.
+      // Persist to covers directory.
       final docsDir = await getApplicationDocumentsDirectory();
       final coversDir = Directory('${docsDir.path}/covers');
       if (!await coversDir.exists()) {
@@ -62,10 +65,9 @@ class CoverCache {
     }
   }
 
+  // ── EPUB helpers ──────────────────────────────────────────
+
   /// Try to find and extract the cover image from an EPUB archive.
-  ///
-  /// Looks for common cover filenames (case-insensitive) and for the OPF
-  /// manifest entry referenced by `<meta name="cover" content="..."/>`.
   static Uint8List? _extractEpubCover(Archive archive) {
     // Priority list of common cover filenames (case-insensitive).
     const coverNames = [
@@ -90,7 +92,6 @@ class CoverCache {
     for (final name in coverNames) {
       for (final entry in archive) {
         final entryName = entry.name;
-        // Match the filename regardless of directory prefix.
         if (entryName.endsWith('/$name') || entryName == name) {
           final content = entry.content;
           if (content is Uint8List && content.isNotEmpty) {
@@ -102,7 +103,6 @@ class CoverCache {
 
     // 2. Try OPF manifest: find metadata cover reference.
     try {
-      // Find container.xml → OPF path.
       final containerEntry =
           archive.files.firstWhere((e) => e.name == 'META-INF/container.xml',
               orElse: () => archive.files.firstWhere(
@@ -115,7 +115,6 @@ class CoverCache {
           final containerText = String.fromCharCodes(
               containerRaw is Uint8List ? containerRaw : containerRaw as List<int>);
 
-          // Extract rootfile path.
           final opfMatch =
               RegExp(r'full-path="([^"]+)"').firstMatch(containerText);
           if (opfMatch != null) {
@@ -124,7 +123,6 @@ class CoverCache {
                 ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1)
                 : '';
 
-            // Find OPF entry.
             final opfEntry = _findEntry(archive, opfPath);
             if (opfEntry != null) {
               final opfRaw = opfEntry.content;
@@ -132,14 +130,12 @@ class CoverCache {
                 final opfText = String.fromCharCodes(
                     opfRaw is Uint8List ? opfRaw : opfRaw as List<int>);
 
-                // Look for <meta name="cover" content="..."/>
                 final coverMetaMatch = RegExp(
                         r'<meta\s+name="cover"\s+content="([^"]+)"',
                         caseSensitive: false)
                     .firstMatch(opfText);
                 if (coverMetaMatch != null) {
                   final coverId = coverMetaMatch.group(1)!;
-                  // Find <item id="coverId" href="..."/>
                   final itemMatch = RegExp(
                           r'<item\s+[^>]*id="' +
                               RegExp.escape(coverId) +
@@ -148,9 +144,7 @@ class CoverCache {
                       .firstMatch(opfText);
                   if (itemMatch != null) {
                     final href = itemMatch.group(1)!;
-                    // Try various path resolutions.
-                    final imageEntry =
-                        _findEntry(archive, '$opfDir$href') ??
+                    final imageEntry = _findEntry(archive, '$opfDir$href') ??
                         _findEntry(archive, href);
                     if (imageEntry != null) {
                       final content = imageEntry.content;
@@ -165,16 +159,14 @@ class CoverCache {
           }
         }
       }
-    } catch (_) {
-      // OPF parsing failed — fall through to null.
-    }
+    } catch (_) {}
 
     return null;
   }
 
-  /// Find a ZIP entry by case-insensitive path.
   static ArchiveFile? _findEntry(Archive archive, String path) {
-    String normalizedPath = path.replaceAll('\\', '/').replaceAll('//', '/');
+    String normalizedPath =
+        path.replaceAll('\\', '/').replaceAll('//', '/');
     while (normalizedPath.startsWith('./') || normalizedPath.startsWith('/')) {
       normalizedPath = normalizedPath.startsWith('./')
           ? normalizedPath.substring(2)
